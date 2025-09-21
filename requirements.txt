@@ -5,4 +5,8 @@ google-generativeai
 python-dotenv
 plotly
 pandas
+sqlite3
 datetime
+pillow
+requests
+bcrypt
