@@ -1,4 +1,3 @@
-# requirements.txt
 streamlit
 streamlit-chat
 google-generativeai
@@ -6,3 +5,7 @@ python-dotenv
 plotly
 pandas
 datetime
+pillow
+requests
+bcrypt
+googletrans==4.0.0-rc1
