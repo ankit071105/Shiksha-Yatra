@@ -2,838 +2,1039 @@
 import streamlit as st
 import sqlite3
 import pandas as pd
-import plotly.express as px
-import plotly.graph_objects as go
-from datetime import datetime, timedelta
-import google.generativeai as genai
-import os
-from dotenv import load_dotenv
+import numpy as np
+import matplotlib.pyplot as plt
+import seaborn as sns
+from datetime import datetime
 import json
-import bcrypt
 import time
+import random
+import os
+from pathlib import Path
+import hashlib
+import base64
+import math
 from PIL import Image
-import requests
-from io import BytesIO
+import io
+import cv2
+from streamlit_drawable_canvas import st_canvas
 
-load_dotenv()
-
+# Set page configuration
 st.set_page_config(
-    page_title="Shiksha Yatra",
-    page_icon="🤖",
+    page_title="Rural EduGame Platform",
+    page_icon="🎓",
     layout="wide",
     initial_sidebar_state="expanded"
 )
 
-def setup_gemini():
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        st.error("Gemini API key not found. Please add it to your environment variables.")
-        st.stop()
-    genai.configure(api_key=api_key)
-    return genai.GenerativeModel('gemini-2.0-flash')
-
+# Database setup
 def init_db():
-    conn = sqlite3.connect('edugamify.db')
+    conn = sqlite3.connect('edu_game.db')
     c = conn.cursor()
-
+    
+    # Create users table
     c.execute('''CREATE TABLE IF NOT EXISTS users
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   username TEXT UNIQUE,
                   password TEXT,
-                  name TEXT,
+                  user_type TEXT,
                   grade INTEGER,
                   school TEXT,
-                  language TEXT DEFAULT 'English',
-                  avatar TEXT DEFAULT 'student1',
-                  points INTEGER DEFAULT 0,
                   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
     
-    # Create chat history table
-    c.execute('''CREATE TABLE IF NOT EXISTS chat_history
+    # Create game progress table
+    c.execute('''CREATE TABLE IF NOT EXISTS game_progress
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id INTEGER,
-                  message TEXT,
-                  response TEXT,
+                  game_name TEXT,
                   subject TEXT,
-                  sentiment TEXT,
-                  timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  score INTEGER,
+                  level INTEGER,
+                  time_spent INTEGER,
+                  completed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                   FOREIGN KEY (user_id) REFERENCES users (id))''')
     
     # Create analytics table
     c.execute('''CREATE TABLE IF NOT EXISTS analytics
                  (id INTEGER PRIMARY KEY AUTOINCREMENT,
                   user_id INTEGER,
-                  subject TEXT,
-                  time_spent INTEGER,
-                  problems_solved INTEGER,
-                  date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                  date TEXT,
+                  engagement_score INTEGER,
+                  improvement_rate REAL,
                   FOREIGN KEY (user_id) REFERENCES users (id))''')
-    
-    # Create gamification table
-    c.execute('''CREATE TABLE IF NOT EXISTS gamification
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  user_id INTEGER,
-                  badge_name TEXT,
-                  badge_description TEXT,
-                  earned_date TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                  FOREIGN KEY (user_id) REFERENCES users (id))''')
-    
-    # Create offline content table
-    c.execute('''CREATE TABLE IF NOT EXISTS offline_content
-                 (id INTEGER PRIMARY KEY AUTOINCREMENT,
-                  title TEXT,
-                  subject TEXT,
-                  content_type TEXT,
-                  content TEXT,
-                  grade_level INTEGER,
-                  language TEXT,
-                  download_count INTEGER DEFAULT 0)''')
-    
-    # Insert some sample offline content
-    c.execute('''INSERT OR IGNORE INTO offline_content 
-                 (title, subject, content_type, content, grade_level, language) VALUES
-                 ('Basic Algebra', 'Math', 'PDF', 'algebra_basics.pdf', 6, 'English'),
-                 ('Photosynthesis', 'Science', 'PDF', 'photosynthesis.pdf', 7, 'English'),
-                 ('Simple Circuits', 'Technology', 'PDF', 'circuits.pdf', 8, 'English'),
-                 ('Geometry Basics', 'Math', 'Game', 'geometry_game.html', 6, 'English'),
-                 ('English Vocabulary', 'English', 'Flashcards', 'vocabulary_cards.pdf', 6, 'English')
-              ''')
     
     conn.commit()
-    return conn
+    conn.close()
 
-# Initialize database and model
-conn = init_db()
-model = setup_gemini()
+# Initialize database
+init_db()
 
-def local_css():
-    st.markdown("""
-        <style>
-        .main-header {
-            font-size: 3rem;
-            color: #4809b7;
-            text-align: center;
-            margin-bottom: 2rem;
-        }
-        .sub-header {
-            font-size: 1.8rem;
-            color: #12438c;
-            margin-bottom: 1rem;
-        }
-        .card {
-            padding: 20px;
-            border-radius: 10px;
-             color: #ddfafd;
-            box-shadow: 0 4px 8px rgba(0,0,0,0.1);
-            margin-bottom: 20px;
-            background-color: rgb(2, 26, 42);
-        }
-        .sidebar .sidebar-content {
-            background-color: #020619;
-        }
-        .stButton>button {
-            background-color: #0e0227;
-            color: white;
-            border-radius: 8px;
-            padding: 10px 24px;
-        }
-        .chat-message {
-            padding: 1.5rem;
-             color: #180539;
-            border-radius: 0.5rem;
-            margin-bottom: 1rem;
-            display: flex;
-            flex-direction: column;
-        }
-        .chat-message.user {
-            background-color: #E3F2FD;
-            margin-left: 20%;
-             color: #180539;
-        }
-        .chat-message.assistant {
-            background-color: #BBDEFB;
-            margin-right: 20%;
-             color: #180539;
-        }
-        .badge {
-            display: inline-block;
-            padding: 5px 10px;
-            border-radius: 15px;
-            background-color: #FFD700;
-            color: #000;
-            margin: 5px;
-            font-weight: bold;
-        }
-        .progress-bar {
-            height: 20px;
-            background-color: #E0E0E0;
-            border-radius: 10px;
-               color: #180539;
-            margin: 10px 0;
-        }
-        .progress-fill {
-            height: 100%;
-            background-color: #4CAF50;
-            border-radius: 10px;
-            text-align: center;
-            color: white;
-            line-height: 20px;
-        }
-        .subject-card {
-            cursor: pointer;
-               color: #180539;
-            transition: all 0.3s ease;
-        }
-        .subject-card:hover {
-            transform: scale(1.05);
-               color: #32116b;
-        }
-        </style>
-    """, unsafe_allow_html=True)
-
-def hash_password(password):
-    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
-
-def check_password(password, hashed):
-    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
-
-def create_user(username, password, name, grade, school, language):
+# User authentication functions
+def create_user(username, password, user_type, grade, school):
+    conn = sqlite3.connect('edu_game.db')
     c = conn.cursor()
+    hashed_password = hashlib.sha256(password.encode()).hexdigest()
     try:
-        hashed_pw = hash_password(password)
-        c.execute("INSERT INTO users (username, password, name, grade, school, language) VALUES (?, ?, ?, ?, ?, ?)",
-                  (username, hashed_pw, name, grade, school, language))
+        c.execute("INSERT INTO users (username, password, user_type, grade, school) VALUES (?, ?, ?, ?, ?)",
+                  (username, hashed_password, user_type, grade, school))
         conn.commit()
-        
-        # Add initial badges
-        user_id = c.lastrowid
-        c.execute("INSERT INTO gamification (user_id, badge_name, badge_description) VALUES (?, ?, ?)",
-                 (user_id, "Starter", "Welcome to EduGamify! You've taken your first step in learning."))
-        conn.commit()
-        
+        conn.close()
         return True
-    except sqlite3.IntegrityError:
+    except:
+        conn.close()
         return False
 
 def verify_user(username, password):
+    conn = sqlite3.connect('edu_game.db')
     c = conn.cursor()
-    c.execute("SELECT * FROM users WHERE username = ?", (username,))
+    hashed_password = hashlib.sha256(password.encode()).hexdigest()
+    c.execute("SELECT * FROM users WHERE username = ? AND password = ?", (username, hashed_password))
     user = c.fetchone()
-    if user and check_password(password, user[2]):
-        return user
-    return None
+    conn.close()
+    return user
 
-# Chat functions
-def get_gemini_response(prompt, user_context):
-    full_prompt = f"""
-    You are an AI tutor named "EduBot" for rural students in grades 6-12. 
-    The student is in grade {user_context['grade']} and studying at {user_context['school']}. 
-    The student's preferred language is {user_context['language']}.
+# Game classes
+class CircuitBuilder:
+    def __init__(self, grade_level):
+        self.grade_level = grade_level
+        self.components = self.generate_components()
+        self.correct_circuit = self.generate_correct_circuit()
+        self.user_circuit = []
+        self.score = 0
+        self.dragged_component = None
+        
+    def generate_components(self):
+        return [
+            {"id": "battery", "name": "Battery", "image": "🔋", "description": "Power source for the circuit"},
+            {"id": "bulb", "name": "Light Bulb", "image": "💡", "description": "Lights up when current flows"},
+            {"id": "switch", "name": "Switch", "image": "🔘", "description": "Controls current flow (on/off)"},
+            {"id": "resistor", "name": "Resistor", "image": "📏", "description": "Limits current flow"},
+            {"id": "wire", "name": "Wire", "image": "➖", "description": "Connects components"}
+        ]
     
-    The student has limited internet access, so your explanations should be clear and concise. 
-    Help with STEM subjects primarily but be willing to help with other subjects too.
+    def generate_correct_circuit(self):
+        if self.grade_level <= 8:
+            return ["battery", "wire", "switch", "wire", "bulb", "wire", "battery"]
+        else:
+            return ["battery", "wire", "resistor", "wire", "switch", "wire", "bulb", "wire", "battery"]
     
-    Make your responses engaging, encouraging, and slightly gamified. Use emojis occasionally to make it fun.
-    If the student is struggling, offer encouragement and break down the problem into smaller steps.
+    def add_component(self, component_id):
+        self.user_circuit.append(component_id)
+        
+    def check_circuit(self):
+        return self.user_circuit == self.correct_circuit
     
-    Student's message: {prompt}
-    
-    Provide a helpful, engaging response that addresses the student's question while making learning fun. 
-    If relevant, suggest a gamified way to practice this concept.
-    """
-    
-    try:
-        response = model.generate_content(full_prompt)
-        return response.text
-    except Exception as e:
-        return f"I'm having trouble responding right now. Please try again later. Error: {str(e)}"
+    def get_score(self):
+        if self.check_circuit():
+            self.score = 100
+        else:
+            # Partial credit based on how many components are in correct position
+            correct_positions = sum(1 for i, comp in enumerate(self.user_circuit) 
+                                  if i < len(self.correct_circuit) and comp == self.correct_circuit[i])
+            self.score = int((correct_positions / len(self.correct_circuit)) * 100)
+        return self.score
 
-def analyze_sentiment(text):
-    # Simple sentiment analysis (in a real app, you'd use a proper NLP library)
-    positive_words = ['good', 'great', 'awesome', 'excellent', 'happy', 'thanks', 'thank you', 'helpful', 'love', 'like']
-    negative_words = ['bad', 'terrible', 'hate', 'difficult', 'hard', 'confused', 'problem', 'issue', 'don\'t understand']
+class PhysicsLab:
+    def __init__(self, grade_level):
+        self.grade_level = grade_level
+        self.equipment = self.generate_equipment()
+        self.experiments = self.generate_experiments()
+        self.current_experiment = 0
+        self.user_setup = []
+        self.score = 0
+        
+    def generate_equipment(self):
+        return [
+            {"id": "spring", "name": "Spring", "image": "🔄", "description": "Measures force and extension"},
+            {"id": "weights", "name": "Weights", "image": "⚖️", "description": "Standard masses for experiments"},
+            {"id": "pendulum", "name": "Pendulum", "image": "⏲️", "description": "For timing oscillations"},
+            {"id": "lens", "name": "Convex Lens", "image": "🔍", "description": "Focuses light rays"},
+            {"id": "prism", "name": "Prism", "image": "🌈", "description": "Splits light into spectrum"},
+            {"id": "magnet", "name": "Magnet", "image": "🧲", "description": "Creates magnetic field"}
+        ]
     
-    text_lower = text.lower()
-    positive_count = sum(1 for word in positive_words if word in text_lower)
-    negative_count = sum(1 for word in negative_words if word in text_lower)
+    def generate_experiments(self):
+        if self.grade_level <= 8:
+            return [
+                {
+                    "name": "Hooke's Law Experiment",
+                    "description": "Set up equipment to verify Hooke's Law: F = kx",
+                    "correct_setup": ["spring", "weights", "weights", "weights"]
+                },
+                {
+                    "name": "Simple Pendulum",
+                    "description": "Set up a simple pendulum to measure time period",
+                    "correct_setup": ["pendulum", "weights"]
+                }
+            ]
+        else:
+            return [
+                {
+                    "name": "Light Refraction",
+                    "description": "Set up equipment to demonstrate light refraction through a prism",
+                    "correct_setup": ["lens", "prism"]
+                },
+                {
+                    "name": "Magnetic Field Mapping",
+                    "description": "Set up equipment to map magnetic field lines",
+                    "correct_setup": ["magnet", "magnet"]
+                }
+            ]
     
-    if positive_count > negative_count:
-        return "positive"
-    elif negative_count > positive_count:
-        return "negative"
-    else:
-        return "neutral"
+    def add_equipment(self, equipment_id):
+        self.user_setup.append(equipment_id)
+    
+    def check_setup(self):
+        return sorted(self.user_setup) == sorted(self.experiments[self.current_experiment]["correct_setup"])
+    
+    def get_score(self):
+        if self.check_setup():
+            self.score = 100
+        else:
+            # Calculate partial score
+            correct_items = sum(1 for item in self.user_setup 
+                              if item in self.experiments[self.current_experiment]["correct_setup"])
+            total_items = len(self.experiments[self.current_experiment]["correct_setup"])
+            self.score = int((correct_items / total_items) * 100)
+        return self.score
+    
+    def next_experiment(self):
+        if self.current_experiment < len(self.experiments) - 1:
+            self.current_experiment += 1
+            self.user_setup = []
+            return True
+        return False
 
-def save_chat(user_id, message, response, subject):
-    sentiment = analyze_sentiment(message)
-    c = conn.cursor()
-    c.execute("INSERT INTO chat_history (user_id, message, response, subject, sentiment) VALUES (?, ?, ?, ?, ?)",
-              (user_id, message, response, subject, sentiment))
+class ChemistryLab:
+    def __init__(self, grade_level):
+        self.grade_level = grade_level
+        self.elements = self.generate_elements()
+        self.compounds = self.generate_compounds()
+        self.current_reaction = 0
+        self.user_elements = []
+        self.score = 0
+        
+    def generate_elements(self):
+        return [
+            {"id": "H", "name": "Hydrogen", "image": "⚪", "description": "Atomic number 1"},
+            {"id": "O", "name": "Oxygen", "image": "🔴", "description": "Atomic number 8"},
+            {"id": "C", "name": "Carbon", "image": "⚫", "description": "Atomic number 6"},
+            {"id": "Na", "name": "Sodium", "image": "🟠", "description": "Atomic number 11"},
+            {"id": "Cl", "name": "Chlorine", "image": "🟢", "description": "Atomic number 17"}
+        ]
     
-    # Award points for interaction
-    c.execute("UPDATE users SET points = points + 5 WHERE id = ?", (user_id,))
+    def generate_compounds(self):
+        if self.grade_level <= 8:
+            return [
+                {
+                    "name": "Water Formation",
+                    "description": "Create water molecules from elements",
+                    "correct_formula": ["H", "H", "O"]
+                },
+                {
+                    "name": "Carbon Dioxide",
+                    "description": "Create carbon dioxide molecules",
+                    "correct_formula": ["C", "O", "O"]
+                }
+            ]
+        else:
+            return [
+                {
+                    "name": "Sodium Chloride",
+                    "description": "Create table salt molecules",
+                    "correct_formula": ["Na", "Cl"]
+                },
+                {
+                    "name": "Glucose",
+                    "description": "Create a glucose molecule",
+                    "correct_formula": ["C", "C", "C", "C", "C", "C", "H", "H", "H", "H", "H", "H", "O", "O", "O", "O", "O", "O"]
+                }
+            ]
     
-    # Check for badge achievements
-    check_badge_achievements(user_id)
+    def add_element(self, element_id):
+        self.user_elements.append(element_id)
     
-    conn.commit()
+    def check_reaction(self):
+        return sorted(self.user_elements) == sorted(self.compounds[self.current_reaction]["correct_formula"])
+    
+    def get_score(self):
+        if self.check_reaction():
+            self.score = 100
+        else:
+            # Calculate partial score
+            correct_items = sum(1 for item in self.user_elements 
+                              if item in self.compounds[self.current_reaction]["correct_formula"])
+            total_items = len(self.compounds[self.current_reaction]["correct_formula"])
+            self.score = int((correct_items / total_items) * 100)
+        return self.score
+    
+    def next_reaction(self):
+        if self.current_reaction < len(self.compounds) - 1:
+            self.current_reaction += 1
+            self.user_elements = []
+            return True
+        return False
 
-def get_chat_history(user_id):
-    c = conn.cursor()
-    c.execute("SELECT message, response, timestamp, subject FROM chat_history WHERE user_id = ? ORDER BY timestamp DESC LIMIT 10", (user_id,))
-    return c.fetchall()
+class GeographyExplorer:
+    def __init__(self, grade_level):
+        self.grade_level = grade_level
+        self.countries = self.generate_countries()
+        self.capitals = self.generate_capitals()
+        self.landmarks = self.generate_landmarks()
+        self.current_mode = "countries"  # countries, capitals, or landmarks
+        self.user_answers = {}
+        self.score = 0
+        
+    def generate_countries(self):
+        return ["India", "United States", "Japan", "Brazil", "Egypt", 
+                "Australia", "Germany", "South Africa", "China", "Mexico"]
+    
+    def generate_capitals(self):
+        return {
+            "India": "New Delhi",
+            "United States": "Washington D.C.",
+            "Japan": "Tokyo",
+            "Brazil": "Brasília",
+            "Egypt": "Cairo",
+            "Australia": "Canberra",
+            "Germany": "Berlin",
+            "South Africa": "Pretoria",
+            "China": "Beijing",
+            "Mexico": "Mexico City"
+        }
+    
+    def generate_landmarks(self):
+        return {
+            "India": "Taj Mahal",
+            "United States": "Statue of Liberty",
+            "Japan": "Mount Fuji",
+            "Brazil": "Christ the Redeemer",
+            "Egypt": "Pyramids of Giza",
+            "Australia": "Sydney Opera House",
+            "Germany": "Brandenburg Gate",
+            "South Africa": "Table Mountain",
+            "China": "Great Wall",
+            "Mexico": "Chichen Itza"
+        }
+    
+    def set_mode(self, mode):
+        self.current_mode = mode
+        self.user_answers = {}
+    
+    def add_answer(self, question, answer):
+        self.user_answers[question] = answer
+    
+    def check_answers(self):
+        if self.current_mode == "countries":
+            correct = 0
+            for country in self.countries:
+                if country in self.user_answers and self.user_answers[country] == self.capitals[country]:
+                    correct += 1
+            return correct / len(self.countries)
+        elif self.current_mode == "capitals":
+            correct = 0
+            for capital in self.capitals.values():
+                if capital in self.user_answers and self.user_answers[capital] in self.capitals and self.capitals[self.user_answers[capital]] == capital:
+                    correct += 1
+            return correct / len(self.capitals)
+        else:  # landmarks
+            correct = 0
+            for country, landmark in self.landmarks.items():
+                if country in self.user_answers and self.user_answers[country] == landmark:
+                    correct += 1
+            return correct / len(self.landmarks)
+    
+    def get_score(self):
+        accuracy = self.check_answers()
+        self.score = int(accuracy * 100)
+        return self.score
+
+class MathAdventure:
+    def __init__(self, grade_level):
+        self.grade_level = grade_level
+        self.problems = self.generate_problems()
+        self.current_problem = 0
+        self.user_answers = {}
+        self.score = 0
+        
+    def generate_problems(self):
+        if self.grade_level <= 8:
+            return [
+                {
+                    "question": "Solve for x: 2x + 5 = 15",
+                    "type": "algebra",
+                    "answer": "5",
+                    "hint": "Subtract 5 from both sides first"
+                },
+                {
+                    "question": "What is the area of a circle with radius 7cm?",
+                    "type": "geometry",
+                    "answer": "153.94",
+                    "hint": "Use the formula πr²"
+                },
+                {
+                    "question": "If a train travels 120 km in 2 hours, what is its speed?",
+                    "type": "word",
+                    "answer": "60",
+                    "hint": "Speed = Distance / Time"
+                }
+            ]
+        else:
+            return [
+                {
+                    "question": "Solve the quadratic equation: x² - 5x + 6 = 0",
+                    "type": "algebra",
+                    "answer": "2,3",
+                    "hint": "Factor the equation"
+                },
+                {
+                    "question": "Find the derivative of f(x) = 3x² + 2x - 5",
+                    "type": "calculus",
+                    "answer": "6x+2",
+                    "hint": "Use the power rule"
+                },
+                {
+                    "question": "What is the probability of getting a sum of 7 when rolling two dice?",
+                    "type": "statistics",
+                    "answer": "0.1667",
+                    "hint": "Count the favorable outcomes divided by total outcomes"
+                }
+            ]
+    
+    def check_answer(self, answer):
+        correct_answer = self.problems[self.current_problem]["answer"]
+        # Allow for multiple formats of the same answer
+        if "," in correct_answer:
+            correct_answers = [a.strip() for a in correct_answer.split(",")]
+            user_answers = [a.strip() for a in answer.split(",")]
+            return sorted(user_answers) == sorted(correct_answers)
+        else:
+            return answer.strip() == correct_answer
+    
+    def next_problem(self):
+        if self.current_problem < len(self.problems) - 1:
+            self.current_problem += 1
+            return True
+        return False
+    
+    def get_score(self):
+        correct = sum(1 for i in range(len(self.problems)) 
+                     if str(i) in self.user_answers and 
+                     self.check_answer(self.user_answers[str(i)]))
+        self.score = int((correct / len(self.problems)) * 100)
+        return self.score
 
 # Analytics functions
-def update_analytics(user_id, subject, time_spent=1, problems_solved=1):
+def save_game_progress(user_id, game_name, subject, score, level, time_spent):
+    conn = sqlite3.connect('edu_game.db')
     c = conn.cursor()
-    c.execute("INSERT INTO analytics (user_id, subject, time_spent, problems_solved) VALUES (?, ?, ?, ?)",
-              (user_id, subject, time_spent, problems_solved))
-    
-    # Award points for learning
-    c.execute("UPDATE users SET points = points + ? WHERE id = ?", (problems_solved * 10, user_id))
-    
-    # Check for badge achievements
-    check_badge_achievements(user_id)
-    
+    c.execute("INSERT INTO game_progress (user_id, game_name, subject, score, level, time_spent) VALUES (?, ?, ?, ?, ?, ?)",
+              (user_id, game_name, subject, score, level, time_spent))
     conn.commit()
+    conn.close()
 
-def get_analytics(user_id):
+def get_user_progress(user_id):
+    conn = sqlite3.connect('edu_game.db')
     c = conn.cursor()
-    c.execute("SELECT subject, SUM(time_spent) as total_time, SUM(problems_solved) as total_problems FROM analytics WHERE user_id = ? GROUP BY subject", (user_id,))
-    return c.fetchall()
+    c.execute("SELECT game_name, subject, score, level, completed_at FROM game_progress WHERE user_id = ? ORDER BY completed_at DESC", (user_id,))
+    progress = c.fetchall()
+    conn.close()
+    return progress
 
-# Gamification functions
-def check_badge_achievements(user_id):
+def get_class_progress(teacher_id):
+    conn = sqlite3.connect('edu_game.db')
     c = conn.cursor()
-    
-    # Check total points
-    c.execute("SELECT points FROM users WHERE id = ?", (user_id,))
-    points = c.fetchone()[0]
-    
-    # Check subjects covered
-    c.execute("SELECT COUNT(DISTINCT subject) FROM analytics WHERE user_id = ?", (user_id,))
-    subjects_covered = c.fetchone()[0]
-    
-    # Check problems solved
-    c.execute("SELECT SUM(problems_solved) FROM analytics WHERE user_id = ?", (user_id,))
-    problems_solved = c.fetchone()[0] or 0
-    
-    # Define badge criteria
-    badges = [
-        ("Quick Learner", "Earned 50 points", points >= 50 and points < 100),
-        ("Knowledge Seeker", "Earned 100 points", points >= 100),
-        ("Math Whiz", "Solved 10 math problems", problems_solved >= 10),
-        ("Science Explorer", "Solved 10 science problems", problems_solved >= 10),
-        ("Multitalented", "Studied 3 different subjects", subjects_covered >= 3),
-    ]
-    
-    # Award new badges
-    for badge_name, badge_desc, condition in badges:
-        if condition:
-            # Check if user already has this badge
-            c.execute("SELECT * FROM gamification WHERE user_id = ? AND badge_name = ?", (user_id, badge_name))
-            if not c.fetchone():
-                c.execute("INSERT INTO gamification (user_id, badge_name, badge_description) VALUES (?, ?, ?)",
-                         (user_id, badge_name, badge_desc))
-                conn.commit()
+    c.execute("""
+        SELECT u.username, g.game_name, g.subject, AVG(g.score), COUNT(g.id)
+        FROM game_progress g
+        JOIN users u ON g.user_id = u.id
+        WHERE u.user_type = 'student'
+        GROUP BY u.username, g.game_name, g.subject
+    """)
+    progress = c.fetchall()
+    conn.close()
+    return progress
 
-def get_badges(user_id):
-    c = conn.cursor()
-    c.execute("SELECT badge_name, badge_description, earned_date FROM gamification WHERE user_id = ? ORDER BY earned_date DESC", (user_id,))
-    return c.fetchall()
-
-def get_leaderboard():
-    c = conn.cursor()
-    c.execute("SELECT name, grade, school, points FROM users ORDER BY points DESC LIMIT 10")
-    return c.fetchall()
-
-# Offline content functions
-def get_offline_content(grade=None, subject=None, language='English'):
-    c = conn.cursor()
-    query = "SELECT * FROM offline_content WHERE language = ?"
-    params = [language]
+# ML functions for analytics
+def analyze_student_performance(user_id):
+    conn = sqlite3.connect('edu_game.db')
+    df = pd.read_sql_query("SELECT game_name, subject, score, level, time_spent FROM game_progress WHERE user_id = ?", conn, params=(user_id,))
+    conn.close()
     
-    if grade:
-        query += " AND grade_level = ?"
-        params.append(grade)
-    if subject and subject != 'All':
-        query += " AND subject = ?"
-        params.append(subject)
+    if df.empty:
+        return "No data available for analysis"
     
-    c.execute(query, params)
-    return c.fetchall()
+    # Simple analysis
+    avg_score = df['score'].mean()
+    total_time = df['time_spent'].sum()
+    favorite_subject = df['subject'].mode()[0] if not df['subject'].mode().empty else "None"
+    
+    analysis = f"""
+    Performance Analysis:
+    - Average Score: {avg_score:.2f}/100
+    - Total Time Spent: {total_time} minutes
+    - Favorite Subject: {favorite_subject}
+    
+    Recommendations:
+    - Focus on subjects where scores are lower
+    - Try to maintain consistent study time
+    - Revisit completed games to improve scores
+    """
+    
+    return analysis
 
-def increment_download_count(content_id):
-    c = conn.cursor()
-    c.execute("UPDATE offline_content SET download_count = download_count + 1 WHERE id = ?", (content_id,))
-    conn.commit()
+# CSS for drag and drop
+def local_css(file_name):
+    with open(file_name) as f:
+        st.markdown(f'<style>{f.read()}</style>', unsafe_allow_html=True)
 
-# Page functions
-def login_page():
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("<h1 class='main-header'>Shiksha Yatra</h1>", unsafe_allow_html=True)
-        st.markdown("<h3 class='sub-header'>Login to Your Account</h3>", unsafe_allow_html=True)
+# Create CSS file for drag and drop
+css_content = """
+.draggable {
+    cursor: move;
+    padding: 10px;
+    margin: 5px;
+    border: 2px solid #4CAF50;
+    border-radius: 5px;
+    background-color: #f9f9f9;
+    display: inline-block;
+}
+
+.dropzone {
+    min-height: 100px;
+    border: 2px dashed #ccc;
+    border-radius: 5px;
+    padding: 10px;
+    margin: 10px 0;
+}
+
+.dropzone.active {
+    border-color: #4CAF50;
+    background-color: #f0fff0;
+}
+
+.game-container {
+    border: 1px solid #ddd;
+    border-radius: 10px;
+    padding: 20px;
+    margin: 10px 0;
+    background-color: #f8f9fa;
+}
+
+.component-palette {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    margin-bottom: 20px;
+}
+
+.lab-bench {
+    min-height: 200px;
+    border: 2px dashed #007bff;
+    border-radius: 5px;
+    padding: 15px;
+    margin: 15px 0;
+    background-color: #e9ecef;
+}
+"""
+
+with open("style.css", "w") as f:
+    f.write(css_content)
+
+local_css("style.css")
+
+# Main application
+def main():
+    # Initialize session state
+    if 'user' not in st.session_state:
+        st.session_state.user = None
+    if 'current_game' not in st.session_state:
+        st.session_state.current_game = None
+    if 'game_state' not in st.session_state:
+        st.session_state.game_state = None
+    
+    # Sidebar for navigation
+    st.sidebar.title("🎓 Rural EduGame Platform")
+    
+    if st.session_state.user is None:
+        # Login/Signup section
+        auth_option = st.sidebar.selectbox("Select Option", ["Login", "Sign Up"])
         
-        with st.form("login_form"):
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            submitted = st.form_submit_button("Login")
-            
-            if submitted:
+        if auth_option == "Login":
+            username = st.sidebar.text_input("Username")
+            password = st.sidebar.text_input("Password", type="password")
+            if st.sidebar.button("Login"):
                 user = verify_user(username, password)
                 if user:
-                    st.session_state.user = {
-                        'id': user[0],
-                        'username': user[1],
-                        'name': user[3],
-                        'grade': user[4],
-                        'school': user[5],
-                        'language': user[6],
-                        'avatar': user[7],
-                        'points': user[8]
-                    }
-                    st.session_state.page = "dashboard"
+                    st.session_state.user = user
                     st.rerun()
                 else:
-                    st.error("Invalid username or password")
+                    st.sidebar.error("Invalid username or password")
         
-        if st.button("Create New Account"):
-            st.session_state.page = "register"
-            st.rerun()
-
-def register_page():
-    col1, col2, col3 = st.columns([1, 2, 1])
-    with col2:
-        st.markdown("<h1 class='main-header'>Shiksha Yatra</h1>", unsafe_allow_html=True)
-        st.markdown("<h3 class='sub-header'>Create New Account</h3>", unsafe_allow_html=True)
-        
-        with st.form("register_form"):
-            name = st.text_input("Full Name")
-            username = st.text_input("Username")
-            password = st.text_input("Password", type="password")
-            grade = st.selectbox("Grade", options=list(range(6, 13)))
-            school = st.text_input("School Name")
-            language = st.selectbox("Preferred Language", 
-                                   ["English", "Hindi", "Odia", "Telugu", "Bengali"])
-            submitted = st.form_submit_button("Create Account")
+        else:  # Sign Up
+            st.sidebar.subheader("Create Account")
+            new_username = st.sidebar.text_input("Choose Username")
+            new_password = st.sidebar.text_input("Choose Password", type="password")
+            user_type = st.sidebar.selectbox("User Type", ["student", "teacher"])
+            grade = st.sidebar.selectbox("Grade", range(6, 13)) if user_type == "student" else None
+            school = st.sidebar.text_input("School Name")
             
-            if submitted:
-                if create_user(username, password, name, grade, school, language):
-                    st.success("Account created successfully! Please login.")
-                    st.session_state.page = "login"
-                    st.rerun()
+            if st.sidebar.button("Create Account"):
+                if create_user(new_username, new_password, user_type, grade, school):
+                    st.sidebar.success("Account created successfully. Please login.")
                 else:
-                    st.error("Username already exists. Please choose a different one.")
-        
-        if st.button("Back to Login"):
-            st.session_state.page = "login"
-            st.rerun()
-
-def dashboard_page():
-    st.markdown(f"<h1 class='main-header'>Welcome, {st.session_state.user['name']}!</h1>", unsafe_allow_html=True)
+                    st.sidebar.error("Username already exists")
     
-    # Display user stats
-    col1, col2, col3, col4 = st.columns(4)
-    analytics = get_analytics(st.session_state.user['id'])
-    
-    with col1:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("Total Learning Time")
-        total_time = sum([a[1] for a in analytics]) if analytics else 0
-        st.metric(label="Hours", value=total_time)
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("Problems Solved")
-        total_problems = sum([a[2] for a in analytics]) if analytics else 0
-        st.metric(label="Count", value=total_problems)
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("Subjects Covered")
-        subjects = len(set([a[0] for a in analytics])) if analytics else 0
-        st.metric(label="Count", value=subjects)
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    with col4:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("EduPoints")
-        st.metric(label="Points", value=st.session_state.user['points'])
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    # Quick actions
-    st.markdown("<h3 class='sub-header'>Quick Actions</h3>", unsafe_allow_html=True)
-    action_col1, action_col2, action_col3, action_col4 = st.columns(4)
-    
-    with action_col1:
-        if st.button("📚 Study Now", use_container_width=True):
-            st.session_state.page = "subjects"
-            st.rerun()
-    
-    with action_col2:
-        if st.button("💬 Ask Tutor", use_container_width=True):
-            st.session_state.page = "chat"
-            st.rerun()
-    
-    with action_col3:
-        if st.button("📥 Offline Content", use_container_width=True):
-            st.session_state.page = "offline"
-            st.rerun()
-    
-    with action_col4:
-        if st.button("🏆 View Badges", use_container_width=True):
-            st.session_state.page = "profile"
-            st.rerun()
-    
-    # Display subject-wise analytics
-    st.markdown("<h3 class='sub-header'>Subject-wise Performance</h3>", unsafe_allow_html=True)
-    if analytics:
-        df = pd.DataFrame(analytics, columns=['Subject', 'Time Spent', 'Problems Solved'])
-        
-        col1, col2 = st.columns(2)
-        
-        with col1:
-            fig = px.pie(df, values='Time Spent', names='Subject', title='Time Spent per Subject')
-            st.plotly_chart(fig, use_container_width=True)
-        
-        with col2:
-            fig = px.bar(df, x='Subject', y='Problems Solved', title='Problems Solved per Subject')
-            st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info("No analytics data yet. Start studying to see your progress!")
-    
-    # Recent activity
-    st.markdown("<h3 class='sub-header'>Recent Activity</h3>", unsafe_allow_html=True)
-    chat_history = get_chat_history(st.session_state.user['id'])
-    if chat_history:
-        for message, response, timestamp, subject in chat_history:
-            st.markdown(f"<div class='card'><b>{timestamp.split()[0]}:</b> {message[:100]}... <i>({subject})</i></div>", unsafe_allow_html=True)
-    else:
-        st.info("No recent activity. Start a conversation with your AI tutor!")
-
-def subjects_page():
-    st.markdown("<h1 class='main-header'>Study Subjects</h1>", unsafe_allow_html=True)
-    st.markdown("<h3 class='sub-header'>Choose a subject to study</h3>", unsafe_allow_html=True)
-    
-    subjects = [
-        {"name": "Mathematics", "icon": "🧮", "color": "#FF6B6B"},
-        {"name": "Science", "icon": "🔬", "color": "#4ECDC4"},
-        {"name": "Technology", "icon": "💻", "color": "#45B7D1"},
-        {"name": "Engineering", "icon": "⚙️", "color": "#FFBE0B"},
-        {"name": "English", "icon": "📚", "color": "#FF6B6B"},
-        {"name": "Social Studies", "icon": "🌍", "color": "#4ECDC4"},
-    ]
-    
-    cols = st.columns(3)
-    for idx, subject in enumerate(subjects):
-        with cols[idx % 3]:
-            st.markdown(f"""
-                <div class='card subject-card' style='border-top: 5px solid {subject["color"]}; text-align: center;'>
-                    <h2>{subject['icon']}</h2>
-                    <h3>{subject['name']}</h3>
-                </div>
-            """, unsafe_allow_html=True)
-            
-            if st.button(f"Study {subject['name']}", key=f"subject_{idx}"):
-                st.session_state.current_subject = subject['name']
-                st.session_state.page = "chat"
-                st.rerun()
-
-def chat_page():
-    st.markdown(f"<h1 class='main-header'>AI Tutor - {st.session_state.get('current_subject', 'General Help')}</h1>", unsafe_allow_html=True)
-    st.markdown("<h3 class='sub-header'>Chat with your personal learning assistant</h3>", unsafe_allow_html=True)
-    
-    # Initialize chat history
-    if "chat_history" not in st.session_state:
-        st.session_state.chat_history = []
-    
-    # Display chat history
-    for i, (message, is_user) in enumerate(st.session_state.chat_history):
-        if is_user:
-            st.markdown(f"<div class='chat-message user'><b>You:</b> {message}</div>", unsafe_allow_html=True)
+        # User is logged in
+        user_id, username, _, user_type, grade, school, _ = st.session_state.user
+        
+        st.sidebar.write(f"Welcome, {username}!")
+        st.sidebar.write(f"Type: {user_type.capitalize()}")
+        if user_type == "student":
+            st.sidebar.write(f"Grade: {grade}")
+        st.sidebar.write(f"School: {school}")
+        
+        if st.sidebar.button("Logout"):
+            st.session_state.user = None
+            st.session_state.current_game = None
+            st.session_state.game_state = None
+            st.rerun()
+        
+        # Navigation based on user type
+        if user_type == "student":
+            menu_options = ["Dashboard", "Circuit Builder", "Physics Lab", "Chemistry Lab", 
+                           "Geography Explorer", "Math Adventure", "My Progress"]
         else:
-            st.markdown(f"<div class='chat-message assistant'><b>EduBot:</b> {message}</div>", unsafe_allow_html=True)
-    
-    # Chat input
-    subject = st.session_state.get('current_subject', 'General')
-    
-    user_input = st.chat_input("Type your question here...")
-    
-    if user_input:
-        # Add user message to chat history
-        st.session_state.chat_history.append((user_input, True))
+            menu_options = ["Dashboard", "Class Analytics", "Student Reports"]
         
-        # Get AI response
-        with st.spinner("EduBot is thinking..."):
-            response = get_gemini_response(user_input, st.session_state.user)
+        choice = st.sidebar.selectbox("Menu", menu_options)
         
-        # Add AI response to chat history
-        st.session_state.chat_history.append((response, False))
-        
-        # Save to database
-        save_chat(st.session_state.user['id'], user_input, response, subject)
-        update_analytics(st.session_state.user['id'], subject, time_spent=2, problems_solved=1)
-        
-        st.rerun()
-    
-    if st.button("Back to Subjects"):
-        st.session_state.page = "subjects"
-        st.rerun()
-
-def offline_content_page():
-    st.markdown("<h1 class='main-header'>Offline Content</h1>", unsafe_allow_html=True)
-    st.markdown("<h3 class='sub-header'>Download content for offline study</h3>", unsafe_allow_html=True)
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        grade_filter = st.selectbox("Filter by Grade", 
-                                   options=["All"] + list(range(6, 13)),
-                                   index=0)
-    
-    with col2:
-        subject_filter = st.selectbox("Filter by Subject", 
-                                     options=["All", "Math", "Science", "Technology", "Engineering", "English"],
-                                     index=0)
-    
-    content = get_offline_content(
-        grade=grade_filter if grade_filter != "All" else None,
-        subject=subject_filter if subject_filter != "All" else None,
-        language=st.session_state.user['language']
-    )
-    
-    if content:
-        for item in content:
-            id, title, subject, content_type, content, grade_level, language, download_count = item
+        # Main content area
+        if choice == "Dashboard":
+            st.title("🎓 Gamified Learning Platform for Rural Education")
+            st.subheader("Welcome to your personalized learning dashboard!")
             
-            st.markdown(f"""
-            <div class='card'>
-                <h3>{title} ({subject})</h3>
-                <p>Grade: {grade_level} | Type: {content_type} | Language: {language} | Downloads: {download_count}</p>
-            </div>
-            """, unsafe_allow_html=True)
+            col1, col2, col3 = st.columns(3)
             
-            if st.button(f"Download {title}", key=f"download_{id}"):
-                increment_download_count(id)
-                st.success(f"Downloading {title}. This content is now available offline!")
-    else:
-        st.info("No offline content available for your filters.")
-    
-    if st.button("Back to Dashboard"):
-        st.session_state.page = "dashboard"
-        st.rerun()
-
-def profile_page():
-    st.markdown("<h1 class='main-header'>Your Profile</h1>", unsafe_allow_html=True)
-    
-    col1, col2 = st.columns(2)
-    
-    with col1:
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("Personal Information")
-        st.write(f"**Name:** {st.session_state.user['name']}")
-        st.write(f"**Username:** {st.session_state.user['username']}")
-        st.write(f"**Grade:** {st.session_state.user['grade']}")
-        st.write(f"**School:** {st.session_state.user['school']}")
-        st.write(f"**Language:** {st.session_state.user['language']}")
-        st.write(f"**EduPoints:** {st.session_state.user['points']}")
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Show learning statistics
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("Learning Statistics")
-        analytics = get_analytics(st.session_state.user['id'])
-        
-        if analytics:
-            df = pd.DataFrame(analytics, columns=['Subject', 'Time Spent', 'Problems Solved'])
-            st.dataframe(df, use_container_width=True)
-        else:
-            st.info("No learning data available yet.")
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    with col2:
-        # Show badges
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("Your Badges")
-        badges = get_badges(st.session_state.user['id'])
-        
-        if badges:
-            for badge_name, badge_description, earned_date in badges:
-                st.markdown(f'<div class="badge">{badge_name}</div>', unsafe_allow_html=True)
-                st.caption(f"{badge_description} - {earned_date.split()[0]}")
-        else:
-            st.info("You haven't earned any badges yet. Keep learning!")
-        st.markdown("</div>", unsafe_allow_html=True)
-        
-        # Show leaderboard
-        st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader("Top Learners")
-        leaderboard = get_leaderboard()
-        
-        if leaderboard:
-            for i, (name, grade, school, points) in enumerate(leaderboard):
-                st.write(f"{i+1}. {name} (Grade {grade}) - {points} points")
-                if name == st.session_state.user['name']:
-                    st.success("That's you!")
-        else:
-            st.info("No leaderboard data available.")
-        st.markdown("</div>", unsafe_allow_html=True)
-    
-    if st.button("Back to Dashboard"):
-        st.session_state.page = "dashboard"
-        st.rerun()
-
-def about_page():
-    st.markdown("<h1 class='main-header'>About Rural EduGamify</h1>", unsafe_allow_html=True)
-    
-    st.markdown("""
-    <div class='card'>
-    <h3>Empowering Rural Education Through Gamification</h3>
-    <p>Rural EduGamify is a innovative platform designed to enhance learning outcomes for students in rural schools (grades 6-12), with a focus on STEM subjects. Our platform uses interactive games, multilingual content, and offline access to engage students with limited internet connectivity.</p>
-    
-    <h4>Key Features:</h4>
-    <ul>
-        <li>AI-powered tutoring system</li>
-        <li>Gamified learning experiences with points and badges</li>
-        <li>Multilingual support for diverse learners</li>
-        <li>Offline accessibility for low-connectivity areas</li>
-        <li>Progress tracking and analytics</li>
-        <li>Low-bandwidth optimized</li>
-        <li>Personalized learning paths</li>
-    </ul>
-    
-    <h4>Our Mission:</h4>
-    <p>To bridge the educational gap in rural areas by providing engaging, accessible, and effective learning tools that inspire students to excel in STEM subjects.</p>
-    
-    <p>This initiative is supported by the Government of Odisha, Electronics & IT Department.</p>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    # Team information
-    st.markdown("<h3 class='sub-header'>Our Team</h3>", unsafe_allow_html=True)
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.markdown("""
-        <div class='card' style='text-align: center;'>
-            <h4>Education Experts</h4>
-            <p>Curriculum designers and teachers with experience in rural education</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col2:
-        st.markdown("""
-        <div class='card' style='text-align: center;'>
-            <h4>Technology Team</h4>
-            <p>Software developers and AI specialists creating innovative learning solutions</p>
-        </div>
-        """, unsafe_allow_html=True)
-    
-    with col3:
-        st.markdown("""
-        <div class='card' style='text-align: center;'>
-            <h4>Community Partners</h4>
-            <p>Local organizations helping implement our platform in rural schools</p>
-        </div>
-        """, unsafe_allow_html=True)
-
-def contact_page():
-    st.markdown("<h1 class='main-header'>Contact Us</h1>", unsafe_allow_html=True)
-    
-    st.markdown("""
-    <div class='card'>
-    <h3>Get in Touch</h3>
-    <p>We'd love to hear from you! Whether you have questions, feedback, or need support, please don't hesitate to reach out.</p>
-    
-    <h4>Contact Information:</h4>
-    <p><b>Email:</b> support@ruraledugamify.org</p>
-    <p><b>Phone:</b> +91-XXX-XXX-XXXX</p>
-    <p><b>Address:</b> Electronics & IT Department, Government of Odisha, India</p>
-    
-    <h4>Send us a message:</h4>
-    </div>
-    """, unsafe_allow_html=True)
-    
-    with st.form("contact_form"):
-        name = st.text_input("Your Name")
-        email = st.text_input("Your Email")
-        message = st.text_area("Your Message")
-        submitted = st.form_submit_button("Send Message")
-        
-        if submitted:
-            st.success("Thank you for your message! We'll get back to you soon.")
-
-# Main app
-def main():
-    local_css()
-    
-    # Initialize session state
-    if "page" not in st.session_state:
-        st.session_state.page = "login"
-    if "user" not in st.session_state:
-        st.session_state.user = None
-    
-    # Sidebar navigation
-    if st.session_state.user:
-        with st.sidebar:
-            st.image("https://ideogram.ai/assets/progressive-image/balanced/response/Y4_3nbqYQOu7h4NNJjaPkw", use_column_width=True)
-            st.write(f"Welcome, {st.session_state.user['name']}!")
+            with col1:
+                st.info("📚 Subjects Covered")
+                st.write("- Mathematics")
+                st.write("- Physics")
+                st.write("- Chemistry")
+                st.write("- Geography")
             
-            # Progress bar
-            st.markdown("<div class='progress-bar'><div class='progress-fill' style='width: 65%;'>Level 3</div></div>", unsafe_allow_html=True)
-            st.write(f"**EduPoints:** {st.session_state.user['points']}")
+            with col2:
+                st.info("🎮 Learning Games")
+                st.write("- Circuit Builder (Physics)")
+                st.write("- Physics Lab (Physics)")
+                st.write("- Chemistry Lab (Chemistry)")
+                st.write("- Geography Explorer (Geography)")
+                st.write("- Math Adventure (Mathematics)")
             
-            st.divider()
+            with col3:
+                st.info("🏆 Your Progress")
+                progress = get_user_progress(user_id)
+                if progress:
+                    st.write(f"Games Completed: {len(progress)}")
+                    avg_score = sum(p[2] for p in progress) / len(progress)
+                    st.write(f"Average Score: {avg_score:.1f}%")
+                else:
+                    st.write("No games completed yet")
             
-            if st.button("🏠 Dashboard"):
-                st.session_state.page = "dashboard"
+            if user_type == "student":
+                st.subheader("Recommended For You")
+                rec_col1, rec_col2 = st.columns(2)
+                
+                with rec_col1:
+                    st.write("**Based on your grade level:**")
+                    if grade <= 8:
+                        st.write("- Try Circuit Builder to learn about electricity")
+                        st.write("- Explore the Chemistry Lab")
+                    else:
+                        st.write("- Challenge yourself with Physics Lab")
+                        st.write("- Test your knowledge with Math Adventure")
+                
+                with rec_col2:
+                    st.write("**Popular among students:**")
+                    st.write("- Circuit Builder - build working circuits")
+                    st.write("- Chemistry Lab - create chemical compounds")
+        
+        elif choice == "Circuit Builder":
+            st.title("🔌 Circuit Builder")
+            st.write("Build electrical circuits by dragging components to the workspace!")
+            
+            if st.session_state.current_game != "Circuit Builder":
+                st.session_state.current_game = "Circuit Builder"
+                st.session_state.game_state = CircuitBuilder(grade)
                 st.rerun()
-            if st.button("📚 Study Subjects"):
-                st.session_state.page = "subjects"
+            
+            game = st.session_state.game_state
+            
+            st.markdown("### Available Components")
+            st.markdown("<div class='component-palette'>", unsafe_allow_html=True)
+            
+            cols = st.columns(len(game.components))
+            for i, component in enumerate(game.components):
+                with cols[i]:
+                    if st.button(f"{component['image']} {component['name']}", key=f"comp_{component['id']}"):
+                        game.add_component(component['id'])
+                        st.rerun()
+                    st.caption(component['description'])
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            st.markdown("### Your Circuit")
+            st.markdown("<div class='lab-bench'>", unsafe_allow_html=True)
+            
+            if game.user_circuit:
+                circuit_display = " → ".join([next(comp['image'] for comp in game.components if comp['id'] == c) for c in game.user_circuit])
+                st.markdown(f"<h3 style='text-align: center;'>{circuit_display}</h3>", unsafe_allow_html=True)
+                
+                # Show component names
+                component_names = " → ".join([next(comp['name'] for comp in game.components if comp['id'] == c) for c in game.user_circuit])
+                st.markdown(f"<p style='text-align: center;'>{component_names}</p>", unsafe_allow_html=True)
+            else:
+                st.info("No components added yet. Click on components above to build your circuit!")
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            if st.button("Test Circuit"):
+                score = game.get_score()
+                if score == 100:
+                    st.success("🎉 Congratulations! Your circuit works perfectly!")
+                    st.balloons()
+                    
+                    # Visual effect for working circuit
+                    if "battery" in game.user_circuit and "bulb" in game.user_circuit:
+                        st.markdown("<h2 style='text-align: center; color: yellow;'>💡 Light Bulb Glowing!</h2>", unsafe_allow_html=True)
+                else:
+                    st.warning(f"Your circuit is {score}% correct. Try again!")
+                
+                save_game_progress(user_id, "Circuit Builder", "Physics", score, grade, 10)
+                
+                if st.button("Build New Circuit"):
+                    st.session_state.game_state = CircuitBuilder(grade)
+                    st.rerun()
+        
+        elif choice == "Physics Lab":
+            st.title("🔬 Physics Laboratory")
+            st.write("Conduct physics experiments by setting up equipment correctly!")
+            
+            if st.session_state.current_game != "Physics Lab":
+                st.session_state.current_game = "Physics Lab"
+                st.session_state.game_state = PhysicsLab(grade)
                 st.rerun()
-            if st.button("💬 AI Tutor"):
-                st.session_state.page = "chat"
+            
+            game = st.session_state.game_state
+            experiment = game.experiments[game.current_experiment]
+            
+            st.markdown(f"### Experiment: {experiment['name']}")
+            st.write(experiment['description'])
+            
+            st.markdown("### Available Equipment")
+            st.markdown("<div class='component-palette'>", unsafe_allow_html=True)
+            
+            cols = st.columns(len(game.equipment))
+            for i, equipment in enumerate(game.equipment):
+                with cols[i]:
+                    if st.button(f"{equipment['image']} {equipment['name']}", key=f"equip_{equipment['id']}"):
+                        game.add_equipment(equipment['id'])
+                        st.rerun()
+                    st.caption(equipment['description'])
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            st.markdown("### Your Experiment Setup")
+            st.markdown("<div class='lab-bench'>", unsafe_allow_html=True)
+            
+            if game.user_setup:
+                setup_display = " + ".join([next(equip['image'] for equip in game.equipment if equip['id'] == e) for e in game.user_setup])
+                st.markdown(f"<h3 style='text-align: center;'>{setup_display}</h3>", unsafe_allow_html=True)
+                
+                # Show equipment names
+                equipment_names = " + ".join([next(equip['name'] for equip in game.equipment if equip['id'] == e) for e in game.user_setup])
+                st.markdown(f"<p style='text-align: center;'>{equipment_names}</p>", unsafe_allow_html=True)
+            else:
+                st.info("No equipment added yet. Click on equipment above to set up your experiment!")
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            if st.button("Run Experiment"):
+                score = game.get_score()
+                if score == 100:
+                    st.success("🎉 Congratulations! Your experiment was successful!")
+                    st.balloons()
+                    
+                    # Show experiment result visualization
+                    if game.current_experiment == 0:  # Hooke's Law
+                        st.line_chart(pd.DataFrame({
+                            'Force (N)': [1, 2, 3, 4, 5],
+                            'Extension (cm)': [2, 4, 6, 8, 10]
+                        }))
+                        st.caption("Hooke's Law: Force vs Extension")
+                    
+                else:
+                    st.warning(f"Your experiment is {score}% correct. Try again!")
+                
+                save_game_progress(user_id, "Physics Lab", "Physics", score, grade, 15)
+                
+                if score == 100 and game.next_experiment():
+                    st.info("Moving to the next experiment!")
+                    st.rerun()
+                
+                if st.button("Reset Experiment"):
+                    st.session_state.game_state = PhysicsLab(grade)
+                    st.rerun()
+        
+        elif choice == "Chemistry Lab":
+            st.title("🧪 Chemistry Laboratory")
+            st.write("Create chemical compounds by combining elements!")
+            
+            if st.session_state.current_game != "Chemistry Lab":
+                st.session_state.current_game = "Chemistry Lab"
+                st.session_state.game_state = ChemistryLab(grade)
                 st.rerun()
-            if st.button("📥 Offline Content"):
-                st.session_state.page = "offline"
+            
+            game = st.session_state.game_state
+            compound = game.compounds[game.current_reaction]
+            
+            st.markdown(f"### Compound: {compound['name']}")
+            st.write(compound['description'])
+            
+            st.markdown("### Available Elements")
+            st.markdown("<div class='component-palette'>", unsafe_allow_html=True)
+            
+            cols = st.columns(len(game.elements))
+            for i, element in enumerate(game.elements):
+                with cols[i]:
+                    if st.button(f"{element['image']} {element['name']}", key=f"elem_{element['id']}"):
+                        game.add_element(element['id'])
+                        st.rerun()
+                    st.caption(element['description'])
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            st.markdown("### Your Chemical Formula")
+            st.markdown("<div class='lab-bench'>", unsafe_allow_html=True)
+            
+            if game.user_elements:
+                formula_display = " + ".join([next(elem['image'] for elem in game.elements if elem['id'] == e) for e in game.user_elements])
+                st.markdown(f"<h3 style='text-align: center;'>{formula_display}</h3>", unsafe_allow_html=True)
+                
+                # Show element symbols
+                element_symbols = " + ".join(game.user_elements)
+                st.markdown(f"<p style='text-align: center;'>{element_symbols}</p>", unsafe_allow_html=True)
+            else:
+                st.info("No elements added yet. Click on elements above to create your compound!")
+            
+            st.markdown("</div>", unsafe_allow_html=True)
+            
+            if st.button("Create Compound"):
+                score = game.get_score()
+                if score == 100:
+                    st.success("🎉 Congratulations! You created the correct compound!")
+                    st.balloons()
+                    
+                    # Show compound visualization
+                    if compound['name'] == "Water Formation":
+                        st.markdown("<h3 style='text-align: center; color: blue;'>H₂O - Water</h3>", unsafe_allow_html=True)
+                        st.image("https://upload.wikimedia.org/wikipedia/commons/thumb/1/10/Water_molecule_3D.svg/1200px-Water_molecule_3D.svg.png", 
+                                width=200, caption="Water Molecule")
+                    
+                else:
+                    st.warning(f"Your compound is {score}% correct. Try again!")
+                
+                save_game_progress(user_id, "Chemistry Lab", "Chemistry", score, grade, 15)
+                
+                if score == 100 and game.next_reaction():
+                    st.info("Moving to the next compound!")
+                    st.rerun()
+                
+                if st.button("Reset Reaction"):
+                    st.session_state.game_state = ChemistryLab(grade)
+                    st.rerun()
+        
+        elif choice == "Geography Explorer":
+            st.title("🌍 Geography Explorer")
+            st.write("Test your knowledge of countries, capitals, and landmarks!")
+            
+            if st.session_state.current_game != "Geography Explorer":
+                st.session_state.current_game = "Geography Explorer"
+                st.session_state.game_state = GeographyExplorer(grade)
                 st.rerun()
-            if st.button("📊 Profile & Badges"):
-                st.session_state.page = "profile"
+            
+            game = st.session_state.game_state
+            
+            st.markdown("### Select Game Mode")
+            mode = st.radio("Choose mode:", ["Countries to Capitals", "Capitals to Countries", "Countries to Landmarks"])
+            
+            if mode == "Countries to Capitals":
+                game.set_mode("countries")
+                st.markdown("#### Match Countries with their Capitals")
+                
+                for country in game.countries:
+                    capital_options = [""] + list(game.capitals.values())
+                    selected = st.selectbox(f"Capital of {country}", options=capital_options, 
+                                          key=f"cap_{country}")
+                    game.add_answer(country, selected)
+            
+            elif mode == "Capitals to Countries":
+                game.set_mode("capitals")
+                st.markdown("#### Match Capitals with their Countries")
+                
+                for capital in game.capitals.values():
+                    country_options = [""] + list(game.capitals.keys())
+                    selected = st.selectbox(f"Country for {capital}", options=country_options,
+                                          key=f"country_{capital}")
+                    game.add_answer(capital, selected)
+            
+            else:  # Countries to Landmarks
+                game.set_mode("landmarks")
+                st.markdown("#### Match Countries with their Famous Landmarks")
+                
+                for country in game.countries:
+                    landmark_options = [""] + list(game.landmarks.values())
+                    selected = st.selectbox(f"Landmark in {country}", options=landmark_options,
+                                          key=f"land_{country}")
+                    game.add_answer(country, selected)
+            
+            if st.button("Check Answers"):
+                score = game.get_score()
+                if score == 100:
+                    st.success("🎉 Perfect! You know your geography!")
+                    st.balloons()
+                else:
+                    st.warning(f"You scored {score}%. Good try!")
+                
+                save_game_progress(user_id, "Geography Explorer", "Geography", score, grade, 10)
+                
+                if st.button("Play Again"):
+                    st.session_state.game_state = GeographyExplorer(grade)
+                    st.rerun()
+        
+        elif choice == "Math Adventure":
+            st.title("🧮 Math Adventure")
+            st.write("Solve mathematical problems and challenges!")
+            
+            if st.session_state.current_game != "Math Adventure":
+                st.session_state.current_game = "Math Adventure"
+                st.session_state.game_state = MathAdventure(grade)
                 st.rerun()
-            if st.button("ℹ️ About"):
-                st.session_state.page = "about"
-                st.rerun()
-            if st.button("📞 Contact"):
-                st.session_state.page = "contact"
-                st.rerun()
-            if st.button("🚪 Logout"):
-                st.session_state.user = None
-                st.session_state.page = "login"
-                st.session_state.chat_history = []
-                st.rerun()
-    
-    # Page routing
-    if st.session_state.page == "login":
-        login_page()
-    elif st.session_state.page == "register":
-        register_page()
-    elif st.session_state.page == "dashboard":
-        dashboard_page()
-    elif st.session_state.page == "subjects":
-        subjects_page()
-    elif st.session_state.page == "chat":
-        chat_page()
-    elif st.session_state.page == "offline":
-        offline_content_page()
-    elif st.session_state.page == "profile":
-        profile_page()
-    elif st.session_state.page == "about":
-        about_page()
-    elif st.session_state.page == "contact":
-        contact_page()
+            
+            game = st.session_state.game_state
+            problem = game.problems[game.current_problem]
+            
+            st.markdown(f"### Problem {game.current_problem + 1} of {len(game.problems)}")
+            st.markdown(f"**{problem['question']}**")
+            st.caption(f"Hint: {problem['hint']}")
+            
+            answer = st.text_input("Your answer:", key=f"math_prob_{game.current_problem}")
+            
+            if answer:
+                game.user_answers[str(game.current_problem)] = answer
+                
+                if st.button("Check Answer"):
+                    if game.check_answer(answer):
+                        st.success("✅ Correct! Well done!")
+                        
+                        if game.next_problem():
+                            st.info("Moving to the next problem!")
+                            st.rerun()
+                        else:
+                            # All problems completed
+                            score = game.get_score()
+                            st.success(f"🎉 You completed all problems with a score of {score}%!")
+                            save_game_progress(user_id, "Math Adventure", "Mathematics", score, grade, 15)
+                            
+                            if st.button("Play Again"):
+                                st.session_state.game_state = MathAdventure(grade)
+                                st.rerun()
+                    else:
+                        st.error("❌ Incorrect. Try again!")
+        
+        elif choice == "My Progress":
+            st.title("📊 My Learning Progress")
+            progress = get_user_progress(user_id)
+            
+            if progress:
+                st.subheader("Game Performance")
+                df = pd.DataFrame(progress, columns=["Game", "Subject", "Score", "Level", "Date"])
+                
+                # Show recent activity
+                st.dataframe(df.head(10))
+                
+                # Show charts
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    st.subheader("Scores by Subject")
+                    subject_scores = df.groupby("Subject")["Score"].mean()
+                    st.bar_chart(subject_scores)
+                
+                with col2:
+                    st.subheader("Progress Over Time")
+                    df['Date'] = pd.to_datetime(df['Date'])
+                    time_series = df.set_index('Date')['Score']
+                    st.line_chart(time_series)
+                
+                # Performance analysis
+                st.subheader("Performance Analysis")
+                analysis = analyze_student_performance(user_id)
+                st.write(analysis)
+            else:
+                st.info("You haven't completed any games yet. Play some games to see your progress here!")
+        
+        elif choice == "Class Analytics" and user_type == "teacher":
+            st.title("👨‍🏫 Class Analytics")
+            progress = get_class_progress(user_id)
+            
+            if progress:
+                df = pd.DataFrame(progress, columns=["Student", "Game", "Subject", "Avg Score", "Games Played"])
+                
+                st.subheader("Overall Class Performance")
+                st.dataframe(df)
+                
+                st.subheader("Average Scores by Subject")
+                subject_avg = df.groupby("Subject")["Avg Score"].mean()
+                st.bar_chart(subject_avg)
+                
+                st.subheader("Student Engagement")
+                engagement = df.groupby("Student")["Games Played"].sum()
+                st.bar_chart(engagement)
+            else:
+                st.info("No student data available yet.")
+        
+        elif choice == "Student Reports" and user_type == "teacher":
+            st.title("📝 Individual Student Reports")
+            
+            # Get list of students
+            conn = sqlite3.connect('edu_game.db')
+            c = conn.cursor()
+            c.execute("SELECT id, username, grade FROM users WHERE user_type = 'student'")
+            students = c.fetchall()
+            conn.close()
+            
+            if students:
+                student_options = [f"{s[1]} (Grade {s[2]})" for s in students]
+                selected_student = st.selectbox("Select Student", student_options)
+                
+                if selected_student:
+                    student_id = students[student_options.index(selected_student)][0]
+                    progress = get_user_progress(student_id)
+                    
+                    if progress:
+                        st.subheader(f"Progress Report for {selected_student}")
+                        df = pd.DataFrame(progress, columns=["Game", "Subject", "Score", "Level", "Date"])
+                        st.dataframe(df)
+                        
+                        # Show analysis
+                        analysis = analyze_student_performance(student_id)
+                        st.write(analysis)
+                    else:
+                        st.info("This student hasn't completed any games yet.")
+            else:
+                st.info("No students registered yet.")
 
 if __name__ == "__main__":
     main()

@@ -1,4 +1,4 @@
-# main.py (updated with multilanguage support)
+# main.py (updated with games page)
 import streamlit as st
 import sqlite3
 import pandas as pd
@@ -16,7 +16,6 @@ import requests
 from io import BytesIO
 import random
 import math
-from googletrans import Translator, LANGUAGES
 
 # Load environment variables
 load_dotenv()
@@ -37,26 +36,6 @@ def setup_gemini():
         st.stop()
     genai.configure(api_key=api_key)
     return genai.GenerativeModel('gemini-2.0-flash')
-
-# Initialize translator
-def setup_translator():
-    return Translator()
-
-# Language mapping
-LANGUAGE_MAPPING = {
-    'English': 'en',
-    'Hindi': 'hi',
-    'Odia': 'or',
-    'Telugu': 'te',
-    'Bengali': 'bn',
-    'Tamil': 'ta',
-    'Marathi': 'mr',
-    'Gujarati': 'gu',
-    'Kannada': 'kn',
-    'Malayalam': 'ml',
-    'Punjabi': 'pa',
-    'Urdu': 'ur'
-}
 
 # Initialize database
 def init_db():
@@ -134,19 +113,15 @@ def init_db():
                  ('Photosynthesis', 'Science', 'PDF', 'photosynthesis.pdf', 7, 'English'),
                  ('Simple Circuits', 'Technology', 'PDF', 'circuits.pdf', 8, 'English'),
                  ('Geometry Basics', 'Math', 'Game', 'geometry_game.html', 6, 'English'),
-                 ('English Vocabulary', 'English', 'Flashcards', 'vocabulary_cards.pdf', 6, 'English'),
-                 ('बीजगणित की मूल बातें', 'Math', 'PDF', 'algebra_basics_hindi.pdf', 6, 'Hindi'),
-                 ('প্রকৃতির বিস্ময়', 'Science', 'PDF', 'nature_wonders_bengali.pdf', 7, 'Bengali'),
-                 ('ଗଣିତ ମୌଳିକ', 'Math', 'PDF', 'math_basics_odia.pdf', 6, 'Odia')
+                 ('English Vocabulary', 'English', 'Flashcards', 'vocabulary_cards.pdf', 6, 'English')
               ''')
     
     conn.commit()
     return conn
 
-# Initialize database and models
+# Initialize database and model
 conn = init_db()
 model = setup_gemini()
-translator = setup_translator()
 
 # Custom CSS
 def local_css():
@@ -263,37 +238,6 @@ def local_css():
         }
         </style>
     """, unsafe_allow_html=True)
-
-# Translation functions
-def translate_text(text, dest_lang='en', src_lang='auto'):
-    """
-    Translate text to the specified language
-    """
-    try:
-        if not text or text.strip() == "":
-            return text
-            
-        # If the destination language is English, no need to translate
-        if dest_lang == 'en' and src_lang == 'en':
-            return text
-            
-        translation = translator.translate(text, dest=dest_lang, src=src_lang)
-        return translation.text
-    except Exception as e:
-        st.error(f"Translation error: {str(e)}")
-        return text
-
-def translate_to_english(text, src_lang='auto'):
-    """
-    Translate text to English
-    """
-    return translate_text(text, 'en', src_lang)
-
-def translate_from_english(text, dest_lang):
-    """
-    Translate text from English to the specified language
-    """
-    return translate_text(text, dest_lang, 'en')
 
 # Authentication functions
 def hash_password(password):
@@ -492,26 +436,15 @@ def math_quiz_game():
     if st.session_state.math_question < len(st.session_state.math_questions):
         question_data = st.session_state.math_questions[st.session_state.math_question]
         
-        # Translate question and options if needed
-        user_lang = st.session_state.user['language']
-        if user_lang != 'English':
-            question = translate_from_english(question_data['question'], LANGUAGE_MAPPING[user_lang])
-            options = [translate_from_english(opt, LANGUAGE_MAPPING[user_lang]) for opt in question_data['options']]
-            answer = translate_from_english(question_data['answer'], LANGUAGE_MAPPING[user_lang])
-        else:
-            question = question_data['question']
-            options = question_data['options']
-            answer = question_data['answer']
-        
         st.markdown(f"<div class='game-container'>", unsafe_allow_html=True)
-        st.markdown(f"**Question {st.session_state.math_question + 1}:** {question}")
+        st.markdown(f"**Question {st.session_state.math_question + 1}:** {question_data['question']}")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            for i, option in enumerate(options):
+            for i, option in enumerate(question_data['options']):
                 if st.button(option, key=f"math_opt_{i}", use_container_width=True):
-                    if option == answer:
+                    if option == question_data['answer']:
                         st.session_state.math_score += 10
                         st.session_state.math_correct = True
                     else:
@@ -522,28 +455,25 @@ def math_quiz_game():
         with col2:
             if st.session_state.math_correct is not None:
                 if st.session_state.math_correct:
-                    st.success(translate_from_english("Correct! 🎉", LANGUAGE_MAPPING[user_lang]))
+                    st.success("Correct! 🎉")
                 else:
-                    error_msg = translate_from_english(f"Wrong! The correct answer is {answer}", LANGUAGE_MAPPING[user_lang])
-                    st.error(error_msg)
+                    st.error(f"Wrong! The correct answer is {question_data['answer']}")
         
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.markdown("<div class='game-container'>", unsafe_allow_html=True)
-        score_text = translate_from_english(f"Quiz Complete! Your score: {st.session_state.math_score}/{(len(st.session_state.math_questions)) * 10}", 
-                                           LANGUAGE_MAPPING[user_lang])
-        st.markdown(f"### {score_text}")
+        st.markdown(f"### Quiz Complete! Your score: {st.session_state.math_score}/{(len(st.session_state.math_questions)) * 10}")
         
-        if st.button(translate_from_english("Play Again", LANGUAGE_MAPPING[user_lang])):
+        if st.button("Play Again"):
             st.session_state.math_score = 0
             st.session_state.math_question = 0
             st.session_state.math_questions = generate_math_questions()
             st.session_state.math_correct = None
             st.rerun()
         
-        if st.button(translate_from_english("Save Score", LANGUAGE_MAPPING[user_lang])):
+        if st.button("Save Score"):
             save_game_score(st.session_state.user['id'], "Math Quiz", st.session_state.math_score, "Math")
-            st.success(translate_from_english("Score saved! 🎯", LANGUAGE_MAPPING[user_lang]))
+            st.success("Score saved! 🎯")
             time.sleep(1)
             st.session_state.math_score = 0
             st.session_state.math_question = 0
@@ -628,26 +558,15 @@ def science_quiz_game():
     if st.session_state.science_question < len(st.session_state.science_questions):
         question_data = st.session_state.science_questions[st.session_state.science_question]
         
-        # Translate question and options if needed
-        user_lang = st.session_state.user['language']
-        if user_lang != 'English':
-            question = translate_from_english(question_data['question'], LANGUAGE_MAPPING[user_lang])
-            options = [translate_from_english(opt, LANGUAGE_MAPPING[user_lang]) for opt in question_data['options']]
-            answer = translate_from_english(question_data['answer'], LANGUAGE_MAPPING[user_lang])
-        else:
-            question = question_data['question']
-            options = question_data['options']
-            answer = question_data['answer']
-        
         st.markdown(f"<div class='game-container'>", unsafe_allow_html=True)
-        st.markdown(f"**Question {st.session_state.science_question + 1}:** {question}")
+        st.markdown(f"**Question {st.session_state.science_question + 1}:** {question_data['question']}")
         
         col1, col2 = st.columns(2)
         
         with col1:
-            for i, option in enumerate(options):
+            for i, option in enumerate(question_data['options']):
                 if st.button(option, key=f"science_opt_{i}", use_container_width=True):
-                    if option == answer:
+                    if option == question_data['answer']:
                         st.session_state.science_score += 10
                         st.session_state.science_correct = True
                     else:
@@ -658,28 +577,25 @@ def science_quiz_game():
         with col2:
             if st.session_state.science_correct is not None:
                 if st.session_state.science_correct:
-                    st.success(translate_from_english("Correct! 🎉", LANGUAGE_MAPPING[user_lang]))
+                    st.success("Correct! 🎉")
                 else:
-                    error_msg = translate_from_english(f"Wrong! The correct answer is {answer}", LANGUAGE_MAPPING[user_lang])
-                    st.error(error_msg)
+                    st.error(f"Wrong! The correct answer is {question_data['answer']}")
         
         st.markdown("</div>", unsafe_allow_html=True)
     else:
         st.markdown("<div class='game-container'>", unsafe_allow_html=True)
-        score_text = translate_from_english(f"Quiz Complete! Your score: {st.session_state.science_score}/{(len(st.session_state.science_questions)) * 10}", 
-                                           LANGUAGE_MAPPING[user_lang])
-        st.markdown(f"### {score_text}")
+        st.markdown(f"### Quiz Complete! Your score: {st.session_state.science_score}/{(len(st.session_state.science_questions)) * 10}")
         
-        if st.button(translate_from_english("Play Again", LANGUAGE_MAPPING[user_lang])):
+        if st.button("Play Again"):
             st.session_state.science_score = 0
             st.session_state.science_question = 0
             st.session_state.science_questions = generate_science_questions()
             st.session_state.science_correct = None
             st.rerun()
         
-        if st.button(translate_from_english("Save Score", LANGUAGE_MAPPING[user_lang])):
+        if st.button("Save Score"):
             save_game_score(st.session_state.user['id'], "Science Quiz", st.session_state.science_score, "Science")
-            st.success(translate_from_english("Score saved! 🎯", LANGUAGE_MAPPING[user_lang]))
+            st.success("Score saved! 🎯")
             time.sleep(1)
             st.session_state.science_score = 0
             st.session_state.science_question = 0
@@ -766,11 +682,7 @@ def memory_match_game():
         st.session_state.memory_moves = 0
         st.session_state.memory_matches = 0
     
-    user_lang = st.session_state.user['language']
-    moves_text = translate_from_english("Moves", LANGUAGE_MAPPING[user_lang])
-    matches_text = translate_from_english("Matches", LANGUAGE_MAPPING[user_lang])
-    
-    st.markdown(f"**{moves_text}:** {st.session_state.memory_moves} | **{matches_text}:** {st.session_state.memory_matches}/8")
+    st.markdown(f"**Moves:** {st.session_state.memory_moves} | **Matches:** {st.session_state.memory_matches}/8")
     
     # Create the memory game grid
     cols = st.columns(4)
@@ -800,18 +712,15 @@ def memory_match_game():
     
     # Check for game completion
     if st.session_state.memory_matches == 8:
-        congrats_text = translate_from_english("🎉 Congratulations! You've matched all pairs!", LANGUAGE_MAPPING[user_lang])
-        st.success(congrats_text)
+        st.success("🎉 Congratulations! You've matched all pairs!")
         score = 100 - (st.session_state.memory_moves - 8) * 5
         score = max(score, 10)
         
-        score_text = translate_from_english(f"**Your score: {score}**", LANGUAGE_MAPPING[user_lang])
-        st.markdown(score_text)
+        st.markdown(f"**Your score: {score}**")
         
-        if st.button(translate_from_english("Save Score", LANGUAGE_MAPPING[user_lang])):
+        if st.button("Save Score"):
             save_game_score(st.session_state.user['id'], "Memory Match", score, "General")
-            success_text = translate_from_english("Score saved! 🎯", LANGUAGE_MAPPING[user_lang])
-            st.success(success_text)
+            st.success("Score saved! 🎯")
             time.sleep(1)
             # Reset the game
             st.session_state.memory_cards = None
@@ -885,8 +794,7 @@ def register_page():
             grade = st.selectbox("Grade", options=list(range(6, 13)))
             school = st.text_input("School Name")
             language = st.selectbox("Preferred Language", 
-                                   ["English", "Hindi", "Odia", "Telugu", "Bengali", "Tamil", "Marathi", 
-                                    "Gujarati", "Kannada", "Malayalam", "Punjabi", "Urdu"])
+                                   ["English", "Hindi", "Odia", "Telugu", "Bengali"])
             submitted = st.form_submit_button("Create Account")
             
             if submitted:
@@ -902,9 +810,7 @@ def register_page():
             st.rerun()
 
 def dashboard_page():
-    user_lang = st.session_state.user['language']
-    welcome_text = translate_from_english(f"Welcome, {st.session_state.user['name']}!", LANGUAGE_MAPPING[user_lang])
-    st.markdown(f"<h1 class='main-header'>{welcome_text}</h1>", unsafe_allow_html=True)
+    st.markdown(f"<h1 class='main-header'>Welcome, {st.session_state.user['name']}!</h1>", unsafe_allow_html=True)
     
     # Display user stats
     col1, col2, col3, col4 = st.columns(4)
@@ -912,91 +818,84 @@ def dashboard_page():
     
     with col1:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader(translate_from_english("Total Learning Time", LANGUAGE_MAPPING[user_lang]))
+        st.subheader("Total Learning Time")
         total_time = sum([a[1] for a in analytics]) if analytics else 0
-        st.metric(label=translate_from_english("Hours", LANGUAGE_MAPPING[user_lang]), value=total_time)
+        st.metric(label="Hours", value=total_time)
         st.markdown("</div>", unsafe_allow_html=True)
     
     with col2:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader(translate_from_english("Problems Solved", LANGUAGE_MAPPING[user_lang]))
+        st.subheader("Problems Solved")
         total_problems = sum([a[2] for a in analytics]) if analytics else 0
-        st.metric(label=translate_from_english("Count", LANGUAGE_MAPPING[user_lang]), value=total_problems)
+        st.metric(label="Count", value=total_problems)
         st.markdown("</div>", unsafe_allow_html=True)
     
     with col3:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader(translate_from_english("Subjects Covered", LANGUAGE_MAPPING[user_lang]))
+        st.subheader("Subjects Covered")
         subjects = len(set([a[0] for a in analytics])) if analytics else 0
-        st.metric(label=translate_from_english("Count", LANGUAGE_MAPPING[user_lang]), value=subjects)
+        st.metric(label="Count", value=subjects)
         st.markdown("</div>", unsafe_allow_html=True)
     
     with col4:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader(translate_from_english("EduPoints", LANGUAGE_MAPPING[user_lang]))
-        st.metric(label=translate_from_english("Points", LANGUAGE_MAPPING[user_lang]), value=st.session_state.user['points'])
+        st.subheader("EduPoints")
+        st.metric(label="Points", value=st.session_state.user['points'])
         st.markdown("</div>", unsafe_allow_html=True)
     
     # Quick actions
-    st.markdown(f"<h3 class='sub-header'>{translate_from_english('Quick Actions', LANGUAGE_MAPPING[user_lang])}</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 class='sub-header'>Quick Actions</h3>", unsafe_allow_html=True)
     action_col1, action_col2, action_col3, action_col4 = st.columns(4)
     
     with action_col1:
-        if st.button(translate_from_english("📚 Study Now", LANGUAGE_MAPPING[user_lang]), use_container_width=True):
+        if st.button("📚 Study Now", use_container_width=True):
             st.session_state.page = "subjects"
             st.rerun()
     
     with action_col2:
-        if st.button(translate_from_english("💬 Ask Tutor", LANGUAGE_MAPPING[user_lang]), use_container_width=True):
+        if st.button("💬 Ask Tutor", use_container_width=True):
             st.session_state.page = "chat"
             st.rerun()
     
     with action_col3:
-        if st.button(translate_from_english("🎮 Play Games", LANGUAGE_MAPPING[user_lang]), use_container_width=True):
+        if st.button("🎮 Play Games", use_container_width=True):
             st.session_state.page = "games"
             st.rerun()
     
     with action_col4:
-        if st.button(translate_from_english("📥 Offline Content", LANGUAGE_MAPPING[user_lang]), use_container_width=True):
+        if st.button("📥 Offline Content", use_container_width=True):
             st.session_state.page = "offline"
             st.rerun()
     
     # Display subject-wise analytics
-    st.markdown(f"<h3 class='sub-header'>{translate_from_english('Subject-wise Performance', LANGUAGE_MAPPING[user_lang])}</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 class='sub-header'>Subject-wise Performance</h3>", unsafe_allow_html=True)
     if analytics:
         df = pd.DataFrame(analytics, columns=['Subject', 'Time Spent', 'Problems Solved'])
         
         col1, col2 = st.columns(2)
         
         with col1:
-            fig = px.pie(df, values='Time Spent', names='Subject', title=translate_from_english('Time Spent per Subject', LANGUAGE_MAPPING[user_lang]))
+            fig = px.pie(df, values='Time Spent', names='Subject', title='Time Spent per Subject')
             st.plotly_chart(fig, use_container_width=True)
         
         with col2:
-            fig = px.bar(df, x='Subject', y='Problems Solved', title=translate_from_english('Problems Solved per Subject', LANGUAGE_MAPPING[user_lang]))
+            fig = px.bar(df, x='Subject', y='Problems Solved', title='Problems Solved per Subject')
             st.plotly_chart(fig, use_container_width=True)
     else:
-        st.info(translate_from_english("No analytics data yet. Start studying to see your progress!", LANGUAGE_MAPPING[user_lang]))
+        st.info("No analytics data yet. Start studying to see your progress!")
     
     # Recent activity
-    st.markdown(f"<h3 class='sub-header'>{translate_from_english('Recent Activity', LANGUAGE_MAPPING[user_lang])}</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 class='sub-header'>Recent Activity</h3>", unsafe_allow_html=True)
     chat_history = get_chat_history(st.session_state.user['id'])
     if chat_history:
         for message, response, timestamp, subject in chat_history:
-            # Translate the message preview if needed
-            if user_lang != 'English':
-                message_preview = translate_from_english(message[:100], LANGUAGE_MAPPING[user_lang])
-            else:
-                message_preview = message[:100]
-                
-            st.markdown(f"<div class='card'><b>{timestamp.split()[0]}:</b> {message_preview}... <i>({subject})</i></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='card'><b>{timestamp.split()[0]}:</b> {message[:100]}... <i>({subject})</i></div>", unsafe_allow_html=True)
     else:
-        st.info(translate_from_english("No recent activity. Start a conversation with your AI tutor!", LANGUAGE_MAPPING[user_lang]))
+        st.info("No recent activity. Start a conversation with your AI tutor!")
 
 def subjects_page():
-    user_lang = st.session_state.user['language']
-    st.markdown(f"<h1 class='main-header'>{translate_from_english('Study Subjects', LANGUAGE_MAPPING[user_lang])}</h1>", unsafe_allow_html=True)
-    st.markdown(f"<h3 class='sub-header'>{translate_from_english('Choose a subject to study', LANGUAGE_MAPPING[user_lang])}</h3>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>Study Subjects</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 class='sub-header'>Choose a subject to study</h3>", unsafe_allow_html=True)
     
     subjects = [
         {"name": "Mathematics", "icon": "🧮", "color": "#FF6B6B"},
@@ -1010,79 +909,62 @@ def subjects_page():
     cols = st.columns(3)
     for idx, subject in enumerate(subjects):
         with cols[idx % 3]:
-            subject_name = translate_from_english(subject['name'], LANGUAGE_MAPPING[user_lang])
             st.markdown(f"""
                 <div class='card subject-card' style='border-top: 5px solid {subject["color"]}; text-align: center;'>
                     <h2>{subject['icon']}</h2>
-                    <h3>{subject_name}</h3>
+                    <h3>{subject['name']}</h3>
                 </div>
             """, unsafe_allow_html=True)
             
-            if st.button(translate_from_english(f"Study {subject['name']}", LANGUAGE_MAPPING[user_lang]), key=f"subject_{idx}"):
+            if st.button(f"Study {subject['name']}", key=f"subject_{idx}"):
                 st.session_state.current_subject = subject['name']
                 st.session_state.page = "chat"
                 st.rerun()
 
 def chat_page():
-    user_lang = st.session_state.user['language']
-    subject = st.session_state.get('current_subject', 'General Help')
-    subject_translated = translate_from_english(subject, LANGUAGE_MAPPING[user_lang])
-    
-    st.markdown(f"<h1 class='main-header'>{translate_from_english('AI Tutor', LANGUAGE_MAPPING[user_lang])} - {subject_translated}</h1>", unsafe_allow_html=True)
-    st.markdown(f"<h3 class='sub-header'>{translate_from_english('Chat with your personal learning assistant', LANGUAGE_MAPPING[user_lang])}</h3>", unsafe_allow_html=True)
+    st.markdown(f"<h1 class='main-header'>AI Tutor - {st.session_state.get('current_subject', 'General Help')}</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 class='sub-header'>Chat with your personal learning assistant</h3>", unsafe_allow_html=True)
     
     # Initialize chat history
     if "chat_history" not in st.session_state:
         st.session_state.chat_history = []
     
     # Display chat history
-    for i, (message, is_user, original_lang) in enumerate(st.session_state.chat_history):
+    for i, (message, is_user) in enumerate(st.session_state.chat_history):
         if is_user:
-            # For user messages, show in the original language
-            display_message = message if original_lang == user_lang else translate_from_english(message, LANGUAGE_MAPPING[user_lang])
-            st.markdown(f"<div class='chat-message user'><b>{translate_from_english('You', LANGUAGE_MAPPING[user_lang])}:</b> {display_message}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='chat-message user'><b>You:</b> {message}</div>", unsafe_allow_html=True)
         else:
-            # For assistant messages, show in the user's language
-            display_message = translate_from_english(message, LANGUAGE_MAPPING[user_lang])
-            st.markdown(f"<div class='chat-message assistant'><b>EduBot:</b> {display_message}</div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='chat-message assistant'><b>EduBot:</b> {message}</div>", unsafe_allow_html=True)
     
     # Chat input
     subject = st.session_state.get('current_subject', 'General')
     
-    chat_placeholder = translate_from_english("Type your question here...", LANGUAGE_MAPPING[user_lang])
-    user_input = st.chat_input(chat_placeholder)
+    user_input = st.chat_input("Type your question here...")
     
     if user_input:
-        # Translate user input to English for processing
-        if user_lang != 'English':
-            user_input_english = translate_to_english(user_input, LANGUAGE_MAPPING[user_lang])
-        else:
-            user_input_english = user_input
-        
-        # Add user message to chat history (store in original language)
-        st.session_state.chat_history.append((user_input, True, user_lang))
+        # Add user message to chat history
+        st.session_state.chat_history.append((user_input, True))
         
         # Get AI response
-        with st.spinner(translate_from_english("EduBot is thinking...", LANGUAGE_MAPPING[user_lang])):
-            response = get_gemini_response(user_input_english, st.session_state.user)
+        with st.spinner("EduBot is thinking..."):
+            response = get_gemini_response(user_input, st.session_state.user)
         
-        # Add AI response to chat history (store in English for consistency)
-        st.session_state.chat_history.append((response, False, 'English'))
+        # Add AI response to chat history
+        st.session_state.chat_history.append((response, False))
         
-        # Save to database (store original message and English response)
+        # Save to database
         save_chat(st.session_state.user['id'], user_input, response, subject)
         update_analytics(st.session_state.user['id'], subject, time_spent=2, problems_solved=1)
         
         st.rerun()
     
-    if st.button(translate_from_english("Back to Subjects", LANGUAGE_MAPPING[user_lang])):
+    if st.button("Back to Subjects"):
         st.session_state.page = "subjects"
         st.rerun()
 
 def games_page():
-    user_lang = st.session_state.user['language']
-    st.markdown(f"<h1 class='main-header'>{translate_from_english('Educational Games', LANGUAGE_MAPPING[user_lang])}</h1>", unsafe_allow_html=True)
-    st.markdown(f"<h3 class='sub-header'>{translate_from_english('Learn through fun games!', LANGUAGE_MAPPING[user_lang])}</h3>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>Educational Games</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 class='sub-header'>Learn through fun games!</h3>", unsafe_allow_html=True)
     
     # Game selection
     games = [
@@ -1094,25 +976,21 @@ def games_page():
     cols = st.columns(3)
     for idx, game in enumerate(games):
         with cols[idx]:
-            game_name = translate_from_english(game['name'], LANGUAGE_MAPPING[user_lang])
-            game_desc = translate_from_english(game['description'], LANGUAGE_MAPPING[user_lang])
-            
             st.markdown(f"""
                 <div class='card subject-card' style='text-align: center;'>
                     <h2>{game['icon']}</h2>
-                    <h3>{game_name}</h3>
-                    <p>{game_desc}</p>
+                    <h3>{game['name']}</h3>
+                    <p>{game['description']}</p>
                 </div>
             """, unsafe_allow_html=True)
             
-            if st.button(translate_from_english(f"Play {game['name']}", LANGUAGE_MAPPING[user_lang]), key=f"game_{idx}"):
+            if st.button(f"Play {game['name']}", key=f"game_{idx}"):
                 st.session_state.current_game = game['name']
                 st.rerun()
     
     # Display selected game
     if hasattr(st.session_state, 'current_game'):
-        game_name = translate_from_english(st.session_state.current_game, LANGUAGE_MAPPING[user_lang])
-        st.markdown(f"<h3 class='sub-header'>{game_name}</h3>", unsafe_allow_html=True)
+        st.markdown(f"<h3 class='sub-header'>{st.session_state.current_game}</h3>", unsafe_allow_html=True)
         
         if st.session_state.current_game == "Math Quiz":
             math_quiz_game()
@@ -1121,49 +999,43 @@ def games_page():
         elif st.session_state.current_game == "Memory Match":
             memory_match_game()
         
-        if st.button(translate_from_english("Back to Games Menu", LANGUAGE_MAPPING[user_lang])):
+        if st.button("Back to Games Menu"):
             del st.session_state.current_game
             st.rerun()
     
     # Display game scores
-    st.markdown(f"<h3 class='sub-header'>{translate_from_english('Your Game Scores', LANGUAGE_MAPPING[user_lang])}</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 class='sub-header'>Your Game Scores</h3>", unsafe_allow_html=True)
     game_scores = get_game_scores(st.session_state.user['id'])
     if game_scores:
         for game_name, score, timestamp in game_scores:
-            game_name_translated = translate_from_english(game_name, LANGUAGE_MAPPING[user_lang])
-            st.markdown(f"<div class='card'><b>{game_name_translated}:</b> {score} {translate_from_english('points', LANGUAGE_MAPPING[user_lang])} <i>({timestamp.split()[0]})</i></div>", unsafe_allow_html=True)
+            st.markdown(f"<div class='card'><b>{game_name}:</b> {score} points <i>({timestamp.split()[0]})</i></div>", unsafe_allow_html=True)
     else:
-        st.info(translate_from_english("No game scores yet. Play some games to earn points!", LANGUAGE_MAPPING[user_lang]))
+        st.info("No game scores yet. Play some games to earn points!")
     
-    if st.button(translate_from_english("Back to Dashboard", LANGUAGE_MAPPING[user_lang])):
+    if st.button("Back to Dashboard"):
         st.session_state.page = "dashboard"
         st.rerun()
 
 def offline_content_page():
-    user_lang = st.session_state.user['language']
-    st.markdown(f"<h1 class='main-header'>{translate_from_english('Offline Content', LANGUAGE_MAPPING[user_lang])}</h1>", unsafe_allow_html=True)
-    st.markdown(f"<h3 class='sub-header'>{translate_from_english('Download content for offline study', LANGUAGE_MAPPING[user_lang])}</h3>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>Offline Content</h1>", unsafe_allow_html=True)
+    st.markdown("<h3 class='sub-header'>Download content for offline study</h3>", unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     
     with col1:
-        grade_filter = st.selectbox(
-            translate_from_english("Filter by Grade", LANGUAGE_MAPPING[user_lang]),
-            options=["All"] + list(range(6, 13)),
-            index=0
-        )
+        grade_filter = st.selectbox("Filter by Grade", 
+                                   options=["All"] + list(range(6, 13)),
+                                   index=0)
     
     with col2:
-        subject_filter = st.selectbox(
-            translate_from_english("Filter by Subject", LANGUAGE_MAPPING[user_lang]),
-            options=["All", "Math", "Science", "Technology", "Engineering", "English"],
-            index=0
-        )
+        subject_filter = st.selectbox("Filter by Subject", 
+                                     options=["All", "Math", "Science", "Technology", "Engineering", "English"],
+                                     index=0)
     
     content = get_offline_content(
         grade=grade_filter if grade_filter != "All" else None,
         subject=subject_filter if subject_filter != "All" else None,
-        language=user_lang
+        language=st.session_state.user['language']
     )
     
     if content:
@@ -1173,95 +1045,85 @@ def offline_content_page():
             st.markdown(f"""
             <div class='card'>
                 <h3>{title} ({subject})</h3>
-                <p>{translate_from_english('Grade', LANGUAGE_MAPPING[user_lang])}: {grade_level} | {translate_from_english('Type', LANGUAGE_MAPPING[user_lang])}: {content_type} | {translate_from_english('Language', LANGUAGE_MAPPING[user_lang])}: {language} | {translate_from_english('Downloads', LANGUAGE_MAPPING[user_lang])}: {download_count}</p>
+                <p>Grade: {grade_level} | Type: {content_type} | Language: {language} | Downloads: {download_count}</p>
             </div>
             """, unsafe_allow_html=True)
             
-            download_text = translate_from_english(f"Download {title}", LANGUAGE_MAPPING[user_lang])
-            if st.button(download_text, key=f"download_{id}"):
+            if st.button(f"Download {title}", key=f"download_{id}"):
                 increment_download_count(id)
-                success_text = translate_from_english(f"Downloading {title}. This content is now available offline!", LANGUAGE_MAPPING[user_lang])
-                st.success(success_text)
+                st.success(f"Downloading {title}. This content is now available offline!")
     else:
-        st.info(translate_from_english("No offline content available for your filters.", LANGUAGE_MAPPING[user_lang]))
+        st.info("No offline content available for your filters.")
     
-    if st.button(translate_from_english("Back to Dashboard", LANGUAGE_MAPPING[user_lang])):
+    if st.button("Back to Dashboard"):
         st.session_state.page = "dashboard"
         st.rerun()
 
 def profile_page():
-    user_lang = st.session_state.user['language']
-    st.markdown(f"<h1 class='main-header'>{translate_from_english('Your Profile', LANGUAGE_MAPPING[user_lang])}</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>Your Profile</h1>", unsafe_allow_html=True)
     
     col1, col2 = st.columns(2)
     
     with col1:
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader(translate_from_english("Personal Information", LANGUAGE_MAPPING[user_lang]))
-        st.write(f"**{translate_from_english('Name', LANGUAGE_MAPPING[user_lang])}:** {st.session_state.user['name']}")
-        st.write(f"**{translate_from_english('Username', LANGUAGE_MAPPING[user_lang])}:** {st.session_state.user['username']}")
-        st.write(f"**{translate_from_english('Grade', LANGUAGE_MAPPING[user_lang])}:** {st.session_state.user['grade']}")
-        st.write(f"**{translate_from_english('School', LANGUAGE_MAPPING[user_lang])}:** {st.session_state.user['school']}")
-        st.write(f"**{translate_from_english('Language', LANGUAGE_MAPPING[user_lang])}:** {st.session_state.user['language']}")
-        st.write(f"**{translate_from_english('EduPoints', LANGUAGE_MAPPING[user_lang])}:** {st.session_state.user['points']}")
+        st.subheader("Personal Information")
+        st.write(f"**Name:** {st.session_state.user['name']}")
+        st.write(f"**Username:** {st.session_state.user['username']}")
+        st.write(f"**Grade:** {st.session_state.user['grade']}")
+        st.write(f"**School:** {st.session_state.user['school']}")
+        st.write(f"**Language:** {st.session_state.user['language']}")
+        st.write(f"**EduPoints:** {st.session_state.user['points']}")
         st.markdown("</div>", unsafe_allow_html=True)
         
         # Show learning statistics
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader(translate_from_english("Learning Statistics", LANGUAGE_MAPPING[user_lang]))
+        st.subheader("Learning Statistics")
         analytics = get_analytics(st.session_state.user['id'])
         
         if analytics:
-            df = pd.DataFrame(analytics, columns=[
-                translate_from_english('Subject', LANGUAGE_MAPPING[user_lang]),
-                translate_from_english('Time Spent', LANGUAGE_MAPPING[user_lang]),
-                translate_from_english('Problems Solved', LANGUAGE_MAPPING[user_lang])
-            ])
+            df = pd.DataFrame(analytics, columns=['Subject', 'Time Spent', 'Problems Solved'])
             st.dataframe(df, use_container_width=True)
         else:
-            st.info(translate_from_english("No learning data available yet.", LANGUAGE_MAPPING[user_lang]))
+            st.info("No learning data available yet.")
         st.markdown("</div>", unsafe_allow_html=True)
     
     with col2:
         # Show badges
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader(translate_from_english("Your Badges", LANGUAGE_MAPPING[user_lang]))
+        st.subheader("Your Badges")
         badges = get_badges(st.session_state.user['id'])
         
         if badges:
             for badge_name, badge_description, earned_date in badges:
-                badge_name_translated = translate_from_english(badge_name, LANGUAGE_MAPPING[user_lang])
-                badge_desc_translated = translate_from_english(badge_description, LANGUAGE_MAPPING[user_lang])
-                
-                st.markdown(f'<div class="badge">{badge_name_translated}</div>', unsafe_allow_html=True)
-                st.caption(f"{badge_desc_translated} - {earned_date.split()[0]}")
+                st.markdown(f'<div class="badge">{badge_name}</div>', unsafe_allow_html=True)
+                st.caption(f"{badge_description} - {earned_date.split()[0]}")
         else:
-            st.info(translate_from_english("You haven't earned any badges yet. Keep learning!", LANGUAGE_MAPPING[user_lang]))
+            st.info("You haven't earned any badges yet. Keep learning!")
         st.markdown("</div>", unsafe_allow_html=True)
         
         # Show leaderboard
         st.markdown("<div class='card'>", unsafe_allow_html=True)
-        st.subheader(translate_from_english("Top Learners", LANGUAGE_MAPPING[user_lang]))
+        st.subheader("Top Learners")
         leaderboard = get_leaderboard()
         
         if leaderboard:
             for i, (name, grade, school, points) in enumerate(leaderboard):
-                st.write(f"{i+1}. {name} ({translate_from_english('Grade', LANGUAGE_MAPPING[user_lang])} {grade}) - {points} {translate_from_english('points', LANGUAGE_MAPPING[user_lang])}")
+                st.write(f"{i+1}. {name} (Grade {grade}) - {points} points")
                 if name == st.session_state.user['name']:
-                    st.success(translate_from_english("That's you!", LANGUAGE_MAPPING[user_lang]))
+                    st.success("That's you!")
         else:
-            st.info(translate_from_english("No leaderboard data available.", LANGUAGE_MAPPING[user_lang]))
+            st.info("No leaderboard data available.")
         st.markdown("</div>", unsafe_allow_html=True)
     
-    if st.button(translate_from_english("Back to Dashboard", LANGUAGE_MAPPING[user_lang])):
+    if st.button("Back to Dashboard"):
         st.session_state.page = "dashboard"
         st.rerun()
 
 def about_page():
-    user_lang = st.session_state.user['language']
-    st.markdown(f"<h1 class='main-header'>{translate_from_english('About Rural EduGamify', LANGUAGE_MAPPING[user_lang])}</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>About Rural EduGamify</h1>", unsafe_allow_html=True)
     
-    about_content = translate_from_english("""
+    st.markdown("""
+    <div class='card'>
     <h3>Empowering Rural Education Through Gamification</h3>
     <p>Rural EduGamify is a innovative platform designed to enhance learning outcomes for students in rural schools (grades 6-12), with a focus on STEM subjects. Our platform uses interactive games, multilingual content, and offline access to engage students with limited internet connectivity.</p>
     
@@ -1280,40 +1142,42 @@ def about_page():
     <p>To bridge the educational gap in rural areas by providing engaging, accessible, and effective learning tools that inspire students to excel in STEM subjects.</p>
     
     <p>This initiative is supported by the Government of Odisha, Electronics & IT Department.</p>
-    """, LANGUAGE_MAPPING[user_lang])
-    
-    st.markdown(f"<div class='card'>{about_content}</div>", unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
     
     # Team information
-    st.markdown(f"<h3 class='sub-header'>{translate_from_english('Our Team', LANGUAGE_MAPPING[user_lang])}</h3>", unsafe_allow_html=True)
+    st.markdown("<h3 class='sub-header'>Our Team</h3>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns(3)
     
     with col1:
-        team_content = translate_from_english("""
-        <h4>Education Experts</h4>
-        <p>Curriculum designers and teachers with experience in rural education</p>
-        """, LANGUAGE_MAPPING[user_lang])
-        st.markdown(f"<div class='card' style='text-align: center;'>{team_content}</div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div class='card' style='text-align: center;'>
+            <h4>Education Experts</h4>
+            <p>Curriculum designers and teachers with experience in rural education</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col2:
-        team_content = translate_from_english("""
-        <h4>Technology Team</h4>
-        <p>Software developers and AI specialists creating innovative learning solutions</p>
-        """, LANGUAGE_MAPPING[user_lang])
-        st.markdown(f"<div class='card' style='text-align: center;'>{team_content}</div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div class='card' style='text-align: center;'>
+            <h4>Technology Team</h4>
+            <p>Software developers and AI specialists creating innovative learning solutions</p>
+        </div>
+        """, unsafe_allow_html=True)
     
     with col3:
-        team_content = translate_from_english("""
-        <h4>Community Partners</h4>
-        <p>Local organizations helping implement our platform in rural schools</p>
-        """, LANGUAGE_MAPPING[user_lang])
-        st.markdown(f"<div class='card' style='text-align: center;'>{team_content}</div>", unsafe_allow_html=True)
+        st.markdown("""
+        <div class='card' style='text-align: center;'>
+            <h4>Community Partners</h4>
+            <p>Local organizations helping implement our platform in rural schools</p>
+        </div>
+        """, unsafe_allow_html=True)
 
 def contact_page():
-    user_lang = st.session_state.user['language']
-    st.markdown(f"<h1 class='main-header'>{translate_from_english('Contact Us', LANGUAGE_MAPPING[user_lang])}</h1>", unsafe_allow_html=True)
+    st.markdown("<h1 class='main-header'>Contact Us</h1>", unsafe_allow_html=True)
     
-    contact_content = translate_from_english("""
+    st.markdown("""
+    <div class='card'>
     <h3>Get in Touch</h3>
     <p>We'd love to hear from you! Whether you have questions, feedback, or need support, please don't hesitate to reach out.</p>
     
@@ -1323,18 +1187,17 @@ def contact_page():
     <p><b>Address:</b> Electronics & IT Department, Government of Odisha, India</p>
     
     <h4>Send us a message:</h4>
-    """, LANGUAGE_MAPPING[user_lang])
-    
-    st.markdown(f"<div class='card'>{contact_content}</div>", unsafe_allow_html=True)
+    </div>
+    """, unsafe_allow_html=True)
     
     with st.form("contact_form"):
-        name = st.text_input(translate_from_english("Your Name", LANGUAGE_MAPPING[user_lang]))
-        email = st.text_input(translate_from_english("Your Email", LANGUAGE_MAPPING[user_lang]))
-        message = st.text_area(translate_from_english("Your Message", LANGUAGE_MAPPING[user_lang]))
-        submitted = st.form_submit_button(translate_from_english("Send Message", LANGUAGE_MAPPING[user_lang]))
+        name = st.text_input("Your Name")
+        email = st.text_input("Your Email")
+        message = st.text_area("Your Message")
+        submitted = st.form_submit_button("Send Message")
         
         if submitted:
-            st.success(translate_from_english("Thank you for your message! We'll get back to you soon.", LANGUAGE_MAPPING[user_lang]))
+            st.success("Thank you for your message! We'll get back to you soon.")
 
 # Main app
 def main():
@@ -1348,45 +1211,41 @@ def main():
     
     # Sidebar navigation
     if st.session_state.user:
-        user_lang = st.session_state.user['language']
         with st.sidebar:
             st.image("https://ideogram.ai/assets/image/lossless/response/Y4_3nbqYQOu7h4NNJjaPkw", use_column_width=True)
-            welcome_text = translate_from_english(f"Welcome, {st.session_state.user['name']}!", LANGUAGE_MAPPING[user_lang])
-            st.write(welcome_text)
+            st.write(f"Welcome, {st.session_state.user['name']}!")
             
             # Progress bar
-            level_text = translate_from_english("Level 3", LANGUAGE_MAPPING[user_lang])
-            st.markdown(f"<div class='progress-bar'><div class='progress-fill' style='width: 65%;'>{level_text}</div></div>", unsafe_allow_html=True)
-            points_text = translate_from_english("EduPoints", LANGUAGE_MAPPING[user_lang])
-            st.write(f"**{points_text}:** {st.session_state.user['points']}")
+            st.markdown("<div class='progress-bar'><div class='progress-fill' style='width: 65%;'>Level 3</div></div>", unsafe_allow_html=True)
+            st.write(f"**EduPoints:** {st.session_state.user['points']}")
             
             st.divider()
             
-            if st.button(translate_from_english("🏠 Dashboard", LANGUAGE_MAPPING[user_lang])):
+            if st.button("🏠 Dashboard"):
                 st.session_state.page = "dashboard"
                 st.rerun()
-            if st.button(translate_from_english("📚 Study Subjects", LANGUAGE_MAPPING[user_lang])):
+            if st.button("📚 Study Subjects"):
                 st.session_state.page = "subjects"
                 st.rerun()
-            if st.button(translate_from_english("💬 AI Tutor", LANGUAGE_MAPPING[user_lang])):
+            if st.button("💬 AI Tutor"):
                 st.session_state.page = "chat"
                 st.rerun()
-            if st.button(translate_from_english("🎮 Educational Games", LANGUAGE_MAPPING[user_lang])):
+            if st.button("🎮 Educational Games"):
                 st.session_state.page = "games"
                 st.rerun()
-            if st.button(translate_from_english("📥 Offline Content", LANGUAGE_MAPPING[user_lang])):
+            if st.button("📥 Offline Content"):
                 st.session_state.page = "offline"
                 st.rerun()
-            if st.button(translate_from_english("📊 Profile & Badges", LANGUAGE_MAPPING[user_lang])):
+            if st.button("📊 Profile & Badges"):
                 st.session_state.page = "profile"
                 st.rerun()
-            if st.button(translate_from_english("ℹ️ About", LANGUAGE_MAPPING[user_lang])):
+            if st.button("ℹ️ About"):
                 st.session_state.page = "about"
                 st.rerun()
-            if st.button(translate_from_english("📞 Contact", LANGUAGE_MAPPING[user_lang])):
+            if st.button("📞 Contact"):
                 st.session_state.page = "contact"
                 st.rerun()
-            if st.button(translate_from_english("🚪 Logout", LANGUAGE_MAPPING[user_lang])):
+            if st.button("🚪 Logout"):
                 st.session_state.user = None
                 st.session_state.page = "login"
                 st.session_state.chat_history = []
