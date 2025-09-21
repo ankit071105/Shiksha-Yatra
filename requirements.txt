@@ -1,0 +1,8 @@
+# requirements.txt
+streamlit
+streamlit-chat
+google-generativeai
+python-dotenv
+plotly
+pandas
+datetime
